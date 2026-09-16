@@ -1,11 +1,13 @@
 /**
  * Content script entry point.
  *
- * Phase 1 scope: observe the feed and log every extracted post. Scoring and the
- * badge UI arrive in phases 2 and 3.
+ * Phase 2 scope: observe the feed, extract each post, and compute its feature
+ * set. Scoring thresholds and the badge UI arrive in phase 3 — for now the
+ * features are logged so they can be eyeballed against a real feed.
  */
 
 import type { ExtractedPost } from "@shared/types";
+import { extractFeatures, toSignals } from "../lib/features/vector";
 import { FeedObserver } from "./observer";
 
 /** Paths where a post feed can appear. */
@@ -16,18 +18,26 @@ function onFeedPage(): boolean {
 }
 
 /** Running totals, for eyeballing the performance budget while dogfooding. */
-const stats = { posts: 0, totalMs: 0, truncated: 0 };
+const stats = { posts: 0, extractMs: 0, featureMs: 0, truncated: 0 };
 
 function handlePost(post: ExtractedPost): void {
+  const features = extractFeatures(post);
+  const signals = toSignals(features);
+
   stats.posts += 1;
-  stats.totalMs += post.extractionMs;
+  stats.extractMs += post.extractionMs;
+  stats.featureMs += features.computeMs;
   if (post.truncated) stats.truncated += 1;
 
+  const timing =
+    `${post.extractionMs.toFixed(1)}ms extract, ` +
+    `${features.computeMs.toFixed(1)}ms features`;
+
   console.debug(
-    `[unslop] #${stats.posts} ${post.author ?? "unknown"} ` +
-      `(${post.extractionMs.toFixed(1)}ms${post.truncated ? ", truncated" : ""}` +
+    `[unslop] #${stats.posts} ${post.author ?? "unknown"} (${timing}` +
+      `${post.truncated ? ", truncated" : ""}` +
       `${post.idIsStable ? "" : ", unstable id"})`,
-    post.text,
+    { text: post.text, signals, features },
   );
 }
 
@@ -65,7 +75,24 @@ Object.assign(globalThis, {
   __unslop: {
     stats: () => ({
       ...stats,
-      avgMs: stats.posts > 0 ? stats.totalMs / stats.posts : 0,
+      avgExtractMs: stats.posts > 0 ? stats.extractMs / stats.posts : 0,
+      avgFeatureMs: stats.posts > 0 ? stats.featureMs / stats.posts : 0,
     }),
+    /** Compute features for arbitrary text, for console experimentation. */
+    analyze: (text: string) => {
+      const features = extractFeatures({
+        id: "manual",
+        idIsStable: false,
+        text,
+        rawText: text,
+        author: null,
+        truncated: false,
+        links: [],
+        hasMedia: false,
+        isReshare: false,
+        extractionMs: 0,
+      });
+      return { features, signals: toSignals(features) };
+    },
   },
 });
