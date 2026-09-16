@@ -178,6 +178,8 @@ Object.assign(globalThis, {
       const bodies = Number(found["withBody"] ?? 0);
       const badged = Number(found["badged"] ?? 0);
 
+      const counters = observer?.counters() ?? null;
+
       let verdict: string;
       if (!onFeedPage()) {
         verdict = `Not a feed page (${location.pathname}). Open linkedin.com/feed/.`;
@@ -189,16 +191,25 @@ Object.assign(globalThis, {
         verdict =
           `Found ${posts} posts but no readable bodies. The body selectors ` +
           "are stale — send `dom.ancestry` below.";
+      } else if (badged === 0 && counters && counters.seen === 0) {
+        verdict =
+          `Found ${posts} posts but none were registered for viewport ` +
+          "detection. Discovery is not reaching the observer.";
+      } else if (badged === 0 && counters && counters.emitted === 0) {
+        verdict =
+          `Registered ${counters.seen} post(s) but extracted none ` +
+          `(${counters.skipped} skipped). Bodies are being rejected — likely ` +
+          "too short, or the body element holds no text.";
       } else if (badged === 0) {
         verdict =
-          `Found ${posts} posts with ${bodies} bodies, but rendered 0 badges. ` +
-          "Scroll the feed; badges render as posts enter the viewport.";
+          `Extracted ${counters?.emitted ?? 0} post(s) but rendered 0 badges. ` +
+          "The badge is being created but not attached or not visible.";
       } else {
         verdict = `Working: ${badged} badge(s) rendered across ${posts} post(s).`;
       }
 
       console.log(`%c[unslop] ${verdict}`, "font-weight:700");
-      return { verdict, selectors: found, dom };
+      return { verdict, selectors: found, dom, counters };
     },
     /** Tear down and re-attach the observers, without reloading the page. */
     rescan: () => {

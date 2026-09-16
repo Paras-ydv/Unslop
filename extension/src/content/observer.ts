@@ -40,6 +40,20 @@ export class FeedObserver {
   private readonly retryTimers: number[] = [];
   /** Elements registered with the viewport observer, i.e. successful discovery. */
   private seenCount = 0;
+  /** Elements that reached extraction but yielded no usable post. */
+  private skipped = 0;
+  /** Elements whose post id had already been emitted. */
+  private duplicates = 0;
+
+  /** Discovery counters, for `__unslop.report()`. */
+  counters(): { seen: number; emitted: number; skipped: number; duplicates: number } {
+    return {
+      seen: this.seenCount,
+      emitted: this.emitted.size,
+      skipped: this.skipped,
+      duplicates: this.duplicates,
+    };
+  }
 
   constructor(options: ObserverOptions) {
     this.onPost = options.onPost;
@@ -85,13 +99,15 @@ export class FeedObserver {
    * first successful scan, with a generous ceiling as a backstop.
    */
   private scheduleRetries(): void {
-    const INTERVAL_MS = 400;
-    const CEILING_MS = 30_000;
-    let waited = 0;
+    const INTERVAL_MS = 1000;
 
+    // Deliberately runs for the life of the page rather than disarming after
+    // the first success. LinkedIn's infinite scroll can append posts in ways
+    // our MutationObserver misses — a virtualized list that recycles nodes, or
+    // a subtree swapped wholesale — and a one-shot poll leaves the extension
+    // permanently stuck at whatever it found first. A 1s document scan is
+    // cheap next to being silently wrong.
     const tick = setInterval(() => {
-      waited += INTERVAL_MS;
-
       const root = findFeedRoot();
 
       // If the root changed identity, the original observer is watching a
@@ -102,11 +118,6 @@ export class FeedObserver {
       }
 
       this.scan(root);
-
-      // `seen` counts elements handed to the IntersectionObserver, which is the
-      // signal that discovery is working — `emitted` would still be empty if
-      // nothing has scrolled into view yet.
-      if (this.seenCount > 0 || waited >= CEILING_MS) clearInterval(tick);
     }, INTERVAL_MS);
 
     this.retryTimers.push(tick as unknown as number);
@@ -179,8 +190,17 @@ export class FeedObserver {
       return;
     }
 
-    if (!post) return;
-    if (this.emitted.has(post.id)) return;
+    if (!post) {
+      // Silent nulls here were the hardest part of diagnosing an empty feed:
+      // "no badge" looked the same whether the element was an ad, had no body,
+      // or was too short. Counting the reasons makes it answerable.
+      this.skipped += 1;
+      return;
+    }
+    if (this.emitted.has(post.id)) {
+      this.duplicates += 1;
+      return;
+    }
     this.emitted.add(post.id);
 
     try {

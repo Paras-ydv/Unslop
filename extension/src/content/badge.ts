@@ -27,7 +27,19 @@ const PALETTE: Record<Verdict, { dot: string; text: string; bg: string; border: 
  * and dark themes, which it cannot detect from inside the shadow boundary.
  */
 const STYLES = `
-  :host { all: initial; display: block; margin: 8px 0 4px; }
+  /* "all: initial" resets inherited page styles, but it also drops the host
+     out of any flex or grid sizing the parent applies, which can collapse it
+     to zero height. The explicit width and min-height keep it visible wherever
+     it lands. */
+  :host {
+    all: initial;
+    display: block !important;
+    width: 100% !important;
+    min-height: 32px;
+    margin: 8px 0 4px;
+    position: relative;
+    z-index: 1;
+  }
   * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont,
       "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 
