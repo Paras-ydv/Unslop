@@ -15,10 +15,10 @@ data-collection target that only dogfooding can reach.
 | Phase | State | Notes |
 | --- | --- | --- |
 | 0 — Scaffold | Done | TypeScript + Vite, MV3, two build passes |
-| 1 — Observer & extractor | Done | Mutation + Intersection observers, layered selectors |
+| 1 — Observer & extractor | Unreliable | Works in principle; post detection on the live feed is the current blocker |
 | 2 — Feature engine | Done | 28 features across 4 groups, 29-post corpus |
 | 3 — Rule engine & badge | Done | 24/29 exact (83%), zero inversions |
-| 4 — Labeled dataset | Mechanism done | Correction UI + JSONL export; needs 300–500 labels |
+| 4 — Labeled dataset | Mechanism done | Correction UI + JSONL export; **0 labels collected so far** |
 | 5 — Local ML model | Not started | Blocked on phase 4 data |
 | 6 — Backend | Not started | Optional |
 
@@ -217,7 +217,33 @@ Signals were ordered by magnitude alone, so a red post could lead its "Why?"
 panel with a strong *quality* signal. Ordering is now verdict-first, strongest
 within each side. Worth preserving when the model supplies signals in phase 5.
 
-### 11. The fixture corpus is synthetic
+### 11. Post detection on the live feed — the current blocker
+
+Every problem above was found by testing. This one was found by *using* the
+extension, and it is the reason nothing downstream can proceed.
+
+Three distinct failures, each fixed but none yet confirmed stable across a long
+session:
+
+- **The badge attached to the feed container, not a post.** The structural
+  fallback selected "the container with the most text-bearing children", which
+  at document level is a page wrapper — so the entire feed scored as one post.
+  Discovery now anchors on the author link every post carries, and the extractor
+  rejects bodies over 6000 characters as a backstop.
+- **Discovery froze after the first few posts.** The hydration poll disarmed on
+  first success, so once `MutationObserver` stopped seeing appended nodes — a
+  virtualised list recycling elements rather than adding them — nothing was ever
+  discovered again.
+- **`/feed/foryou/` uses different markup** from the classic feed, and the
+  class-name selectors missed it entirely.
+
+The lesson worth carrying: **a selector that matches nothing and a selector
+pointed at the wrong subtree look identical from outside.** Both produce silence.
+That ambiguity cost several debugging rounds, and is why `diagnose()`, `probe()`
+and `report()` now exist — the last of which names the failing stage in a
+sentence rather than handing over two tables to interpret.
+
+### 12. The fixture corpus is synthetic
 
 The 29 fixtures were written to span the pattern space, not sampled from a real
 feed. They are adequate for regression testing and useless as an accuracy

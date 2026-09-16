@@ -16,15 +16,17 @@ See [plan.md](plan.md) for the full build plan and known problems.
 | Phase | Component | State |
 | --- | --- | --- |
 | 0 | Scaffold and toolchain | ✅ Done |
-| 1 | DOM observer and extractor | ✅ Done |
+| 1 | DOM observer and extractor | ⚠️ Works, unreliable on the live feed |
 | 2 | Feature engine | ✅ Done |
 | 3 | Rule engine and badge UI | ✅ Done |
-| 4 | Labeled dataset | ✅ Mechanism done — collecting |
+| 4 | Labeled dataset | ⚠️ Mechanism done, 0 labels collected |
 | 5 | Local ML model | ⬜ Blocked on phase 4 data |
 | 6 | Backend (optional) | ⬜ Not started |
 
-The extension is usable today. Phases 0–3 are complete, and phase 4's labeling
-UI is in place — it now needs 300–500 real labels before phase 5 can begin.
+The scoring pipeline is complete and the badge renders. The weak link is post
+**detection** — finding individual posts in LinkedIn's live DOM has been
+unreliable, and everything downstream is blocked on it, including collecting the
+labels phase 5 needs. See [Open issues](#open-issues).
 
 **Accuracy on the built-in corpus: 24/29 exact (83%), zero inversions** — no
 green post is ever called red, or the reverse. That corpus is synthetic, so
@@ -133,13 +135,75 @@ shows progress and class balance, and exports everything as JSONL for phase 5.
 Class balance matters more than raw count — 400 labels that are 90% red will
 train badly.
 
-## Known gaps
+## Open issues
 
-- Truncated posts are marked but not always expanded; the "…see more" click is
-  best-effort and the DOM may not have updated when text is read.
-- Posts without a URN fall back to a content hash, which collides across genuine
-  duplicates. Harmless for scoring, approximate for caching.
-- The fixture corpus is synthetic. Real accuracy is unknown until phase 4 data
-  arrives.
-- Scoring runs on the main thread. It measures well under budget, but phase 5's
-  model should move to a Web Worker.
+Roughly in the order they should be tackled.
+
+### 1. Post detection on the live feed is unreliable — blocking
+
+The scorer and badge work; finding posts in LinkedIn's actual DOM does not, yet.
+Everything downstream is blocked on this, including collecting labels.
+
+Observed failures, all fixed but none confirmed stable over a long session:
+
+- **Badge attached to the feed container instead of a post.** The structural
+  fallback picked "the container with the most text-bearing children", which at
+  document level is a page wrapper — so the whole feed scored as one post.
+  Discovery now anchors on the author link every post carries, and the extractor
+  rejects any body over 6000 characters as a backstop.
+- **Discovery froze after the first few posts.** The hydration poll disarmed
+  itself on first success, so once `MutationObserver` stopped seeing appended
+  nodes — a virtualised list recycling elements — nothing was ever found again.
+  The poll now runs for the life of the page.
+- **`/feed/foryou/` markup differs from the classic feed.** Class-name selectors
+  missed entirely there.
+
+What to do next: run `__unslop.report()` on a real feed after a few minutes of
+scrolling and check that `postsFound` keeps climbing and `badged` tracks it. If
+a stage fails, `report()` names which one.
+
+### 2. LinkedIn DOM fragility — ongoing
+
+Class names are obfuscated and rotate without notice, so this is maintenance,
+not a bug to close. Selectors are layered — stable attributes and ARIA roles
+first, then structural heuristics, then content-based discovery — and a miss
+skips the post rather than throwing. But each layer is a guess until it is seen
+working against the real feed.
+
+The structural fallbacks especially need scrutiny: they are imprecise by design
+and will occasionally pick up a sidebar module or an ad.
+
+### 3. Dogfooding has not started — blocks phase 5
+
+**Zero real labels have been collected.** The mechanism is built (correction
+buttons in the "Why?" panel, storage, JSONL export) but no data exists, and
+phase 5's classifier cannot begin without it.
+
+The target is 300–500 labels. Three things matter while collecting:
+
+- **Class balance.** 400 labels that are 90% red will train badly. The popup
+  shows the split; deliberately seek out under-represented classes.
+- **Spread over days, not one session.** A single day's feed is a biased sample
+  of whatever LinkedIn happened to surface.
+- **One person's feed is still one professional network.** Labels will overfit
+  to it. Worth sourcing posts from outside the personal feed before trusting any
+  accuracy number from phase 5.
+
+### 4. The fixture corpus is synthetic
+
+The 29 fixtures were written to span the pattern space, not sampled from a real
+feed. The 83% figure means the detectors fire as designed — it is not a
+real-world accuracy estimate, and should not be quoted as one.
+
+### 5. Smaller known gaps
+
+- **Truncated posts.** The "…see more" click is best-effort; the DOM may not
+  have updated when text is read, so a post can be scored on its hook line
+  alone — the most slop-like part of any post.
+- **Unstable post ids.** Posts without a URN fall back to a content hash, which
+  collides across genuine duplicates. Harmless for scoring, approximate for
+  caching.
+- **Main-thread scoring.** Measures well under budget today, but phase 5's model
+  should move to a Web Worker before it janks scrolling.
+- **Badge styling is unverified.** The CSS was written without seeing it render.
+  Dark mode, narrow widths, and LinkedIn's own card styling are all untested.
