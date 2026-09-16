@@ -114,6 +114,15 @@ function watchNavigation(): void {
 startObserving();
 watchNavigation();
 
+// Loud, unmissable startup banner. The console on a LinkedIn tab is shared with
+// the page and every other extension, and is routinely thousands of lines deep,
+// so a plain log is invisible in practice.
+console.log(
+  "%c[unslop] loaded%c — run __unslop.report() to see what it can find",
+  "background:#0a66c2;color:#fff;font-weight:700;padding:2px 6px;border-radius:3px",
+  "color:inherit",
+);
+
 // Exposed for manual inspection from the devtools console while dogfooding.
 Object.assign(globalThis, {
   __unslop: {
@@ -141,6 +150,41 @@ Object.assign(globalThis, {
     diagnose,
     /** Report what is in the DOM regardless of our selectors. */
     probe,
+    /**
+     * One-call health check that says what is wrong in plain language.
+     *
+     * The raw diagnose/probe output needs interpreting; this does that
+     * interpretation so the answer is a sentence, not a table.
+     */
+    report: () => {
+      const found = diagnose();
+      const dom = probe();
+      const posts = Number(found["postsFound"] ?? 0);
+      const bodies = Number(found["withBody"] ?? 0);
+      const badged = Number(found["badged"] ?? 0);
+
+      let verdict: string;
+      if (!onFeedPage()) {
+        verdict = `Not a feed page (${location.pathname}). Open linkedin.com/feed/.`;
+      } else if (posts === 0) {
+        verdict =
+          "No post containers matched. LinkedIn's markup has changed — " +
+          "send the `dom.counts` and `dom.ancestry` below.";
+      } else if (bodies === 0) {
+        verdict =
+          `Found ${posts} posts but no readable bodies. The body selectors ` +
+          "are stale — send `dom.ancestry` below.";
+      } else if (badged === 0) {
+        verdict =
+          `Found ${posts} posts with ${bodies} bodies, but rendered 0 badges. ` +
+          "Scroll the feed; badges render as posts enter the viewport.";
+      } else {
+        verdict = `Working: ${badged} badge(s) rendered across ${posts} post(s).`;
+      }
+
+      console.log(`%c[unslop] ${verdict}`, "font-weight:700");
+      return { verdict, selectors: found, dom };
+    },
     /** Tear down and re-attach the observers, without reloading the page. */
     rescan: () => {
       startObserving();

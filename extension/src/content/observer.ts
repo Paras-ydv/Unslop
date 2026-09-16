@@ -38,6 +38,8 @@ export class FeedObserver {
   private observedRoot: Element | null = null;
   /** Hydration re-scan timers, cleared on stop. */
   private readonly retryTimers: number[] = [];
+  /** Elements registered with the viewport observer, i.e. successful discovery. */
+  private seenCount = 0;
 
   constructor(options: ObserverOptions) {
     this.onPost = options.onPost;
@@ -74,22 +76,40 @@ export class FeedObserver {
     this.scheduleRetries();
   }
 
-  /** Re-scan on a decaying schedule while the feed hydrates. */
+  /**
+   * Re-scan until posts are found, then stop.
+   *
+   * A fixed retry window cannot work: a slow feed can take far longer than any
+   * delay worth hard-coding, and once posts exist the MutationObserver handles
+   * everything. So this polls at a steady interval and disarms itself on the
+   * first successful scan, with a generous ceiling as a backstop.
+   */
   private scheduleRetries(): void {
-    for (const delay of [500, 1500, 3000, 6000]) {
-      const timer = setTimeout(() => {
-        const root = findFeedRoot();
-        this.scan(root);
+    const INTERVAL_MS = 400;
+    const CEILING_MS = 30_000;
+    let waited = 0;
 
-        // If the root changed identity, the original observer is watching a
-        // detached tree; re-point it at the live one.
-        if (this.mutationObserver && root !== this.observedRoot) {
-          this.observedRoot = root;
-          this.mutationObserver.observe(root, { childList: true, subtree: true });
-        }
-      }, delay);
-      this.retryTimers.push(timer as unknown as number);
-    }
+    const tick = setInterval(() => {
+      waited += INTERVAL_MS;
+
+      const root = findFeedRoot();
+
+      // If the root changed identity, the original observer is watching a
+      // detached tree and will never fire again; re-point it at the live one.
+      if (this.mutationObserver && root !== this.observedRoot) {
+        this.observedRoot = root;
+        this.mutationObserver.observe(root, { childList: true, subtree: true });
+      }
+
+      this.scan(root);
+
+      // `seen` counts elements handed to the IntersectionObserver, which is the
+      // signal that discovery is working — `emitted` would still be empty if
+      // nothing has scrolled into view yet.
+      if (this.seenCount > 0 || waited >= CEILING_MS) clearInterval(tick);
+    }, INTERVAL_MS);
+
+    this.retryTimers.push(tick as unknown as number);
   }
 
   /** Stop observing and release both observers. */
@@ -99,8 +119,10 @@ export class FeedObserver {
     this.observedRoot = null;
     this.intersectionObserver.disconnect();
 
-    for (const timer of this.retryTimers) clearTimeout(timer);
+    // clearInterval, not clearTimeout: scheduleRetries now uses an interval.
+    for (const timer of this.retryTimers) clearInterval(timer);
     this.retryTimers.length = 0;
+    this.seenCount = 0;
     if (this.pendingScan !== null) {
       clearTimeout(this.pendingScan);
       this.pendingScan = null;
@@ -130,6 +152,7 @@ export class FeedObserver {
     for (const post of findPosts(root)) {
       if (post.hasAttribute(SEEN_ATTR)) continue;
       post.setAttribute(SEEN_ATTR, "");
+      this.seenCount += 1;
       this.intersectionObserver.observe(post);
     }
   }
