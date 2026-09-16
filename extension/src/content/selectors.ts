@@ -153,6 +153,50 @@ export function isReshare(post: HTMLElement): boolean {
 const BADGE_DIAG_ATTR = "data-unslop-badged";
 
 /**
+ * Report what is actually in the DOM, independent of our selectors.
+ *
+ * `diagnose` answers "did our selectors match?"; this answers "what was there
+ * to match?" — which is the question that matters when LinkedIn has changed its
+ * markup and every selector we own returns nothing.
+ */
+export function probe(): Record<string, unknown> {
+  const counts: Record<string, number> = {};
+  for (const selector of [
+    "div.feed-shared-update-v2",
+    "[data-urn]",
+    "[data-id]",
+    "article",
+    '[role="article"]',
+    ".fie-impression-container",
+    ".update-components-text",
+    ".update-components-actor__title",
+    ".feed-shared-inline-show-more-text",
+    "main",
+    ".scaffold-finite-scroll__content",
+  ]) {
+    try {
+      counts[selector] = document.querySelectorAll(selector).length;
+    } catch {
+      counts[selector] = -1;
+    }
+  }
+
+  // Class names on the ancestors of a known post-body element. When our
+  // selectors miss, this is what they should have been looking for.
+  const bodyish = document.querySelector(
+    "[class*='update-components-text'], [class*='commentary'], [class*='description']",
+  );
+  const ancestry: string[] = [];
+  let node: Element | null = bodyish;
+  for (let depth = 0; node && depth < 8; depth++) {
+    ancestry.push(`${node.tagName.toLowerCase()}.${node.className || "(none)"}`.slice(0, 140));
+    node = node.parentElement;
+  }
+
+  return { counts, ancestry, url: location.pathname };
+}
+
+/**
  * Report what the selectors can and cannot see on the current page.
  *
  * Exposed through `__unslop.diagnose()`. When LinkedIn changes its markup the

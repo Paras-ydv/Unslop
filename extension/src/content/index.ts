@@ -11,7 +11,7 @@ import { extractFeatures } from "../lib/features/vector";
 import { scorePost, summarize } from "../lib/scoring/scorer";
 import { renderBadge } from "./badge";
 import { FeedObserver } from "./observer";
-import { diagnose } from "./selectors";
+import { diagnose, probe } from "./selectors";
 
 /** Paths where a post feed can appear. */
 const FEED_PATHS = [/^\/feed\/?/, /^\/in\//, /^\/company\//, /^\/posts\//, /^\/$/];
@@ -139,6 +139,8 @@ Object.assign(globalThis, {
     clearCache,
     /** Report what the selectors can see, for diagnosing a silent feed. */
     diagnose,
+    /** Report what is in the DOM regardless of our selectors. */
+    probe,
     /** Tear down and re-attach the observers, without reloading the page. */
     rescan: () => {
       startObserving();

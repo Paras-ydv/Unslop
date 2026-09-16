@@ -34,6 +34,10 @@ export class FeedObserver {
   private pendingScan: number | null = null;
   /** Subtrees awaiting a scan, coalesced across a mutation burst. */
   private dirty = new Set<Element>();
+  /** The root currently under observation, to detect it being swapped out. */
+  private observedRoot: Element | null = null;
+  /** Hydration re-scan timers, cleared on stop. */
+  private readonly retryTimers: number[] = [];
 
   constructor(options: ObserverOptions) {
     this.onPost = options.onPost;
@@ -60,13 +64,43 @@ export class FeedObserver {
     });
 
     this.mutationObserver.observe(root, { childList: true, subtree: true });
+    this.observedRoot = root;
+
+    // The feed is usually still empty at document_idle, and the feed root we
+    // captured may itself be replaced during hydration — in which case our
+    // MutationObserver is watching a detached node and never fires again.
+    // Re-scanning from a fresh root a few times covers both cases without
+    // polling forever.
+    this.scheduleRetries();
+  }
+
+  /** Re-scan on a decaying schedule while the feed hydrates. */
+  private scheduleRetries(): void {
+    for (const delay of [500, 1500, 3000, 6000]) {
+      const timer = setTimeout(() => {
+        const root = findFeedRoot();
+        this.scan(root);
+
+        // If the root changed identity, the original observer is watching a
+        // detached tree; re-point it at the live one.
+        if (this.mutationObserver && root !== this.observedRoot) {
+          this.observedRoot = root;
+          this.mutationObserver.observe(root, { childList: true, subtree: true });
+        }
+      }, delay);
+      this.retryTimers.push(timer as unknown as number);
+    }
   }
 
   /** Stop observing and release both observers. */
   stop(): void {
     this.mutationObserver?.disconnect();
     this.mutationObserver = null;
+    this.observedRoot = null;
     this.intersectionObserver.disconnect();
+
+    for (const timer of this.retryTimers) clearTimeout(timer);
+    this.retryTimers.length = 0;
     if (this.pendingScan !== null) {
       clearTimeout(this.pendingScan);
       this.pendingScan = null;
