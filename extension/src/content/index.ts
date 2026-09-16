@@ -111,8 +111,23 @@ function watchNavigation(): void {
   }, 500);
 }
 
-startObserving();
-watchNavigation();
+/**
+ * Start once the DOM is usable.
+ *
+ * The script runs at document_end, which is early enough that `document.body`
+ * exists but late enough that waiting on DOMContentLoaded costs nothing when it
+ * has already fired.
+ */
+function boot(): void {
+  startObserving();
+  watchNavigation();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", boot, { once: true });
+} else {
+  boot();
+}
 
 // Loud, unmissable startup banner. The console on a LinkedIn tab is shared with
 // the page and every other extension, and is routinely thousands of lines deep,

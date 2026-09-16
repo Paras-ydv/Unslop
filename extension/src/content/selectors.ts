@@ -49,11 +49,61 @@ export function isPostElement(el: Element): boolean {
   return el.matches(POST_SELECTOR);
 }
 
-/** Find all post containers within a subtree, including the root itself. */
+/**
+ * Find posts by feed shape rather than by class name.
+ *
+ * A feed is a container with many similar, text-bearing children. This looks
+ * for the element with the most such children and treats those children as
+ * posts. It is a last resort — imprecise, and it will occasionally pick up a
+ * sidebar module — but it degrades gracefully instead of showing nothing at
+ * all when LinkedIn ships markup we have never seen.
+ */
+function findPostsByStructure(scope: Element): HTMLElement[] {
+  /** A post is at least this many characters of text. */
+  const MIN_TEXT = 80;
+  /** A feed has at least this many sibling posts. */
+  const MIN_SIBLINGS = 3;
+
+  let bestChildren: HTMLElement[] = [];
+
+  for (const container of scope.querySelectorAll<HTMLElement>("div,main,section,ul")) {
+    const children = Array.from(container.children).filter((child): child is HTMLElement => {
+      if (!(child instanceof HTMLElement)) return false;
+      const text = child.innerText?.trim() ?? "";
+      return text.length >= MIN_TEXT;
+    });
+
+    if (children.length >= MIN_SIBLINGS && children.length > bestChildren.length) {
+      bestChildren = children;
+    }
+  }
+
+  return bestChildren;
+}
+
+/**
+ * Find all post containers within a subtree, including the root itself.
+ *
+ * Falls back to searching the whole document when the given root yields
+ * nothing. The feed root is a guess, and picking the wrong container means
+ * every post is outside the subtree we search — which looks identical to
+ * "LinkedIn changed its markup" but is our bug, not theirs.
+ */
 export function findPosts(root: Element): HTMLElement[] {
+  let scope: Element = root;
+  if (root !== document.body && root.querySelector(POST_SELECTOR) === null) {
+    scope = document.body;
+  }
+
+  // Nothing matched anywhere: fall back to structural discovery, which depends
+  // on the shape of the feed rather than on any class name.
+  if (scope.querySelector(POST_SELECTOR) === null) {
+    return findPostsByStructure(scope);
+  }
+
   const found = new Set<HTMLElement>();
-  if (root instanceof HTMLElement && isPostElement(root)) found.add(root);
-  for (const el of root.querySelectorAll<HTMLElement>(POST_SELECTOR)) {
+  if (scope instanceof HTMLElement && isPostElement(scope)) found.add(scope);
+  for (const el of scope.querySelectorAll<HTMLElement>(POST_SELECTOR)) {
     // A post matching several selectors, or nested inside a reshare, would be
     // added twice; the Set and the outermost-wins filter below prevent that.
     found.add(el);
@@ -73,6 +123,38 @@ export function readUrn(post: HTMLElement): string | null {
   }
   const nested = post.querySelector<HTMLElement>("[data-urn*='urn:li:']");
   return nested?.getAttribute("data-urn") ?? null;
+}
+
+/**
+ * Last-resort body discovery, used when every known selector misses.
+ *
+ * Walks the post for the element holding the most text that is not itself a
+ * container of other text blocks. This is slower and less precise than a class
+ * selector, but it depends on nothing LinkedIn can rename, so it keeps the
+ * extension working through a redesign instead of going silent.
+ */
+function findBodyByContent(post: HTMLElement): HTMLElement | null {
+  let best: HTMLElement | null = null;
+  let bestLength = 0;
+
+  for (const candidate of post.querySelectorAll<HTMLElement>("div,span,p")) {
+    const text = candidate.innerText?.trim() ?? "";
+    if (text.length < 40) continue;
+
+    // Prefer the innermost element holding the text: a candidate whose child
+    // carries nearly the same text is a wrapper, not the body itself.
+    const childText = Array.from(candidate.children)
+      .map((child) => (child as HTMLElement).innerText?.trim().length ?? 0)
+      .reduce((max, len) => Math.max(max, len), 0);
+    if (childText > text.length * 0.9) continue;
+
+    if (text.length > bestLength) {
+      best = candidate;
+      bestLength = text.length;
+    }
+  }
+
+  return best;
 }
 
 /** Candidate containers for the post body, most specific first. */
@@ -95,7 +177,7 @@ export function findBody(post: HTMLElement): HTMLElement | null {
     const el = post.querySelector<HTMLElement>(selector);
     if (el && el.textContent && el.textContent.trim().length > 0) return el;
   }
-  return null;
+  return findBodyByContent(post);
 }
 
 /** Candidate elements holding the author's display name. */

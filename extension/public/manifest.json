@@ -4,16 +4,16 @@
   "version": "0.3.0",
   "description": "Flags low-value and AI-slop posts in your LinkedIn feed, in real time and on-device.",
   "permissions": ["storage", "downloads"],
-  "host_permissions": ["https://www.linkedin.com/*"],
+  "host_permissions": ["https://*.linkedin.com/*", "https://linkedin.com/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Unslop"
   },
   "content_scripts": [
     {
-      "matches": ["https://www.linkedin.com/*"],
+      "matches": ["https://*.linkedin.com/*", "https://linkedin.com/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_end"
     }
   ]
 }
