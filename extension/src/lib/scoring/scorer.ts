@@ -21,7 +21,12 @@ import {
 
 /** A scored post, with the intermediate detail the UI needs. */
 export interface ScoredPost extends Classification {
-  features: FeatureSet;
+  /**
+   * Present only when the post was actually scored. A verdict restored from
+   * cache has none: the features are large, rebuildable, and read by nothing
+   * downstream, so recomputing them for a cache hit is pure cost.
+   */
+  features?: FeatureSet;
   /** True when the score sits close enough to a threshold to warrant the model. */
   uncertain: boolean;
 }
@@ -174,8 +179,8 @@ export function verdictLabel(verdict: Verdict): string {
 /**
  * One-line reason, drawn from the strongest signal.
  *
- * The badge shows this without the user having to open the panel, so it names
- * the single dominant factor rather than summarizing all of them.
+ * The panel shows this on the collapsed row, before the user opens it, so it
+ * names the single dominant factor rather than summarizing all of them.
  */
 export function summarize(scored: ScoredPost): string {
   const top = scored.signals[0];

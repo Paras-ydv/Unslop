@@ -64,7 +64,7 @@ describe("scorer output shape", () => {
 
   it("attaches at least one signal to every non-trivial post", () => {
     for (const { fixture, result } of scored) {
-      if (result.features.wordCount < 10) continue;
+      if ((result.features?.wordCount ?? 0) < 10) continue;
       expect(result.signals.length, fixture.id).toBeGreaterThan(0);
     }
   });
@@ -122,7 +122,7 @@ describe("value over provenance", () => {
   it("flags hand-written bait carrying no AI tells", () => {
     const { result } = scored.find((s) => s.fixture.id === "red-pure-cta")!;
     expect(result.verdict).toBe("red");
-    expect(result.features.linguistic.llmTells).toBe(0);
+    expect(result.features?.linguistic.llmTells).toBe(0);
   });
 
   it("does not confidently condemn a very short post", () => {

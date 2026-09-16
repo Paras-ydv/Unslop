@@ -1,17 +1,16 @@
 /**
  * Content script entry point.
  *
- * Phase 3 scope: observe the feed, extract and score each post, and render a
- * verdict badge onto it. Everything runs locally; no network calls.
+ * Observe the feed, extract and score each post, and list the verdict in the
+ * panel. Everything runs locally; no network calls.
  */
 
 import type { ExtractedPost } from "@shared/types";
 import { readCache, writeCache, cacheSize, clearCache } from "../lib/cache";
-import { extractFeatures } from "../lib/features/vector";
-import { scorePost, summarize } from "../lib/scoring/scorer";
-import { renderBadge } from "./badge";
+import { scorePost, summarize, type ScoredPost } from "../lib/scoring/scorer";
+import { listedCount, resetPanel, showPost } from "./panel";
 import { FeedObserver } from "./observer";
-import { diagnose, probe } from "./selectors";
+import { authorReport, diagnose, probe, shapeReport, truncationReport } from "./selectors";
 
 /** Paths where a post feed can appear. */
 const FEED_PATHS = [/^\/feed\/?/, /^\/in\//, /^\/company\//, /^\/posts\//, /^\/$/];
@@ -31,11 +30,12 @@ const stats = {
 function handlePost(post: ExtractedPost, element: HTMLElement): void {
   const start = performance.now();
 
-  // A cache hit still needs a badge — the element is new even when the post is
-  // not — but it skips feature extraction and scoring entirely.
+  // A cache hit skips feature extraction and scoring entirely. It used to
+  // recompute the feature set anyway — the expensive half — for a consumer that
+  // never read it, which made the cache close to free of benefit.
   const cached = post.idIsStable ? readCache(post.id) : null;
 
-  const scored = cached
+  const scored: ScoredPost = cached
     ? {
         postId: post.id,
         verdict: cached.verdict as "green" | "yellow" | "red",
@@ -43,8 +43,7 @@ function handlePost(post: ExtractedPost, element: HTMLElement): void {
         confidence: cached.confidence,
         signals: cached.signals,
         source: "rules" as const,
-        features: extractFeatures(post),
-        uncertain: false,
+        uncertain: cached.uncertain,
       }
     : scorePost(post);
 
@@ -55,10 +54,11 @@ function handlePost(post: ExtractedPost, element: HTMLElement): void {
       score: scored.score,
       confidence: scored.confidence,
       signals: scored.signals,
+      uncertain: scored.uncertain,
     });
   }
 
-  renderBadge(element, post, scored);
+  showPost(element, post, scored);
 
   stats.posts += 1;
   stats.totalMs += performance.now() - start;
@@ -77,9 +77,9 @@ function startObserving(): void {
   observer = null;
 
   if (!onFeedPage()) {
-    // Said out loud rather than returning quietly: "no badges" and "not a feed
-    // page" look identical from the outside, and that ambiguity is the hardest
-    // part of diagnosing a silent extension.
+    // Said out loud rather than returning quietly: "no posts listed" and "not a
+    // feed page" look identical from the outside, and that ambiguity is the
+    // hardest part of diagnosing a silent extension.
     console.info("[unslop] not a feed page, idle at", location.pathname);
     return;
   }
@@ -91,8 +91,8 @@ function startObserving(): void {
   console.info("[unslop] observing", location.pathname, found);
   if (found["postsFound"] === 0) {
     console.warn(
-      "[unslop] no posts matched — LinkedIn's markup may have changed. " +
-        "Run __unslop.diagnose() after the feed loads.",
+      "[unslop] no posts matched yet — this is normal before the feed hydrates. " +
+        "Run __unslop.report() after it loads.",
     );
   }
 }
@@ -107,6 +107,7 @@ function watchNavigation(): void {
   setInterval(() => {
     if (location.href === lastHref) return;
     lastHref = location.href;
+    resetPanel();
     startObserving();
   }, 500);
 }
@@ -121,6 +122,46 @@ function watchNavigation(): void {
 function boot(): void {
   startObserving();
   watchNavigation();
+
+  // Self-diagnose once the feed has had a moment to render.
+  //
+  // `__unslop` lives in the content script's isolated world, so typing it into
+  // the console only works after switching the context dropdown from "top" to
+  // this extension — which is not discoverable, and meant the one command that
+  // answers "why is this listing comments?" read as `undefined`. A `console.log`
+  // from here shows up in the page console regardless of context, so the answer
+  // arrives without anyone having to find the dropdown.
+  setTimeout(() => {
+    const d = diagnose();
+    const path = d["path"];
+    if (path === "cards" || path === "structure") {
+      const how =
+        path === "cards"
+          ? `${String(d["cardsOnPage"])} named post card(s)`
+          : "post boxes derived from the shape of the feed list";
+      console.log(
+        `%c[unslop] ok%c — ${how}; discovery is using containment, so ` +
+          `comments cannot be listed as posts (${String(d["postsFound"])} found)`,
+        "background:#22543d;color:#fff;font-weight:700;padding:2px 6px;border-radius:3px",
+        "color:inherit",
+      );
+      // The derived path is right about *what* a post box is and can still be
+      // wrong about *which* group of them is the feed — it picked a two-child
+      // wrapper once. Printing the candidates it ranked makes that visible
+      // without anyone having to reach the isolated-world console.
+      if (path === "structure") shapeReport();
+      return;
+    }
+    console.warn(
+      `%c[unslop] heuristics%c — neither a named post card nor a feed list ` +
+        "could be found, so discovery fell back to walking up from author " +
+        "links and comments may be listed as posts. The chains below are what " +
+        "the container rules should be built from.",
+      "background:#9b2c2c;color:#fff;font-weight:700;padding:2px 6px;border-radius:3px",
+      "color:inherit",
+    );
+    shapeReport();
+  }, 4000);
 }
 
 if (document.readyState === "loading") {
@@ -145,6 +186,7 @@ Object.assign(globalThis, {
       ...stats,
       avgMs: stats.posts > 0 ? stats.totalMs / stats.posts : 0,
       cached: cacheSize(),
+      listed: listedCount(),
     }),
     /** Score arbitrary text, for console experimentation. */
     analyze: (text: string) =>
@@ -165,6 +207,14 @@ Object.assign(globalThis, {
     diagnose,
     /** Report what is in the DOM regardless of our selectors. */
     probe,
+    shape: shapeReport,
+    /**
+     * Is a collapsed post's full text still in the DOM, or does it need a
+     * click? Run with a few long posts on screen.
+     */
+    truncation: truncationReport,
+    /** Why a row reads "Unknown author": what each author source yielded. */
+    authors: authorReport,
     /**
      * One-call health check that says what is wrong in plain language.
      *
@@ -176,7 +226,7 @@ Object.assign(globalThis, {
       const dom = probe();
       const posts = Number(found["postsFound"] ?? 0);
       const bodies = Number(found["withBody"] ?? 0);
-      const badged = Number(found["badged"] ?? 0);
+      const listed = listedCount();
 
       const counters = observer?.counters() ?? null;
 
@@ -191,21 +241,25 @@ Object.assign(globalThis, {
         verdict =
           `Found ${posts} posts but no readable bodies. The body selectors ` +
           "are stale — send `dom.ancestry` below.";
-      } else if (badged === 0 && counters && counters.seen === 0) {
+      } else if (listed === 0 && counters && counters.seen === 0) {
         verdict =
           `Found ${posts} posts but none were registered for viewport ` +
           "detection. Discovery is not reaching the observer.";
-      } else if (badged === 0 && counters && counters.emitted === 0) {
+      } else if (listed === 0 && counters && counters.retrying > 0) {
+        verdict =
+          `${counters.retrying} post(s) are still waiting for a body to load. ` +
+          "This resolves itself; re-run in a few seconds.";
+      } else if (listed === 0 && counters && counters.emitted === 0) {
         verdict =
           `Registered ${counters.seen} post(s) but extracted none ` +
-          `(${counters.skipped} skipped). Bodies are being rejected — likely ` +
+          `(${counters.skipped} gave up). Bodies are being rejected — likely ` +
           "too short, or the body element holds no text.";
-      } else if (badged === 0) {
+      } else if (listed === 0) {
         verdict =
-          `Extracted ${counters?.emitted ?? 0} post(s) but rendered 0 badges. ` +
-          "The badge is being created but not attached or not visible.";
+          `Extracted ${counters?.emitted ?? 0} post(s) but listed none. ` +
+          "The panel is not receiving them.";
       } else {
-        verdict = `Working: ${badged} badge(s) rendered across ${posts} post(s).`;
+        verdict = `Working: ${listed} post(s) listed out of ${posts} found.`;
       }
 
       console.log(`%c[unslop] ${verdict}`, "font-weight:700");

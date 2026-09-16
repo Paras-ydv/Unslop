@@ -9,7 +9,14 @@
  * mostly serve stale results from an older scorer.
  */
 
-const PREFIX = "unslop:v1:";
+import { SCORER_VERSION } from "./labels";
+
+/**
+ * Namespaced by scorer version. `sessionStorage` already bounds staleness to
+ * the tab, but a tab left open across an extension reload would otherwise be
+ * served verdicts computed by weights that no longer exist.
+ */
+const PREFIX = `unslop:${SCORER_VERSION}:`;
 
 /** What is persisted. Features are not cached — they are large and rebuildable. */
 export interface CachedVerdict {
@@ -17,6 +24,8 @@ export interface CachedVerdict {
   score: number;
   confidence: number;
   signals: { key: string; label: string; weight: number }[];
+  /** Whether the score sat close enough to a threshold to be borderline. */
+  uncertain: boolean;
 }
 
 /**

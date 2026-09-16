@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cacheSize, clearCache, readCache, writeCache } from "./cache";
+import { SCORER_VERSION } from "./labels";
 
 /** Minimal sessionStorage stand-in; the test environment is node, not jsdom. */
 function installStorage(): Map<string, string> {
@@ -21,6 +22,7 @@ const verdict = {
   score: 0.91,
   confidence: 0.8,
   signals: [{ key: "ctaPhrases", label: "Asks for likes", weight: 0.9 }],
+  uncertain: false,
 };
 
 describe("cache", () => {
@@ -40,13 +42,13 @@ describe("cache", () => {
 
   it("reads through to storage when the memory mirror is cold", () => {
     const store = installStorage();
-    store.set("unslop:v1:post-2", JSON.stringify(verdict));
+    store.set(`unslop:${SCORER_VERSION}:post-2`, JSON.stringify(verdict));
     expect(readCache("post-2")).toEqual(verdict);
   });
 
   it("treats malformed entries as a miss rather than throwing", () => {
     const store = installStorage();
-    store.set("unslop:v1:bad", "{not json");
+    store.set(`unslop:${SCORER_VERSION}:bad`, "{not json");
     expect(readCache("bad")).toBeNull();
   });
 

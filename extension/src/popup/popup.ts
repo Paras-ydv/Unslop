@@ -42,7 +42,7 @@ function render(labels: Label[]): void {
 
   if (stats.total === 0) {
     container.append(
-      el("p", "empty", "No labels yet. Open “Why?” on a post to mark one."),
+      el("p", "empty", "No labels yet. Expand a row in the Unslop panel to mark one."),
     );
     return;
   }
