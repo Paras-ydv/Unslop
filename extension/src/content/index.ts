@@ -1,13 +1,15 @@
 /**
  * Content script entry point.
  *
- * Phase 2 scope: observe the feed, extract each post, and compute its feature
- * set. Scoring thresholds and the badge UI arrive in phase 3 — for now the
- * features are logged so they can be eyeballed against a real feed.
+ * Phase 3 scope: observe the feed, extract and score each post, and render a
+ * verdict badge onto it. Everything runs locally; no network calls.
  */
 
 import type { ExtractedPost } from "@shared/types";
-import { extractFeatures, toSignals } from "../lib/features/vector";
+import { readCache, writeCache, cacheSize, clearCache } from "../lib/cache";
+import { extractFeatures } from "../lib/features/vector";
+import { scorePost, summarize } from "../lib/scoring/scorer";
+import { renderBadge } from "./badge";
 import { FeedObserver } from "./observer";
 
 /** Paths where a post feed can appear. */
@@ -18,26 +20,52 @@ function onFeedPage(): boolean {
 }
 
 /** Running totals, for eyeballing the performance budget while dogfooding. */
-const stats = { posts: 0, extractMs: 0, featureMs: 0, truncated: 0 };
+const stats = {
+  posts: 0,
+  cacheHits: 0,
+  totalMs: 0,
+  verdicts: { green: 0, yellow: 0, red: 0 },
+};
 
-function handlePost(post: ExtractedPost): void {
-  const features = extractFeatures(post);
-  const signals = toSignals(features);
+function handlePost(post: ExtractedPost, element: HTMLElement): void {
+  const start = performance.now();
+
+  // A cache hit still needs a badge — the element is new even when the post is
+  // not — but it skips feature extraction and scoring entirely.
+  const cached = post.idIsStable ? readCache(post.id) : null;
+
+  const scored = cached
+    ? {
+        postId: post.id,
+        verdict: cached.verdict as "green" | "yellow" | "red",
+        score: cached.score,
+        confidence: cached.confidence,
+        signals: cached.signals,
+        source: "rules" as const,
+        features: extractFeatures(post),
+        uncertain: false,
+      }
+    : scorePost(post);
+
+  if (cached) stats.cacheHits += 1;
+  else if (post.idIsStable) {
+    writeCache(post.id, {
+      verdict: scored.verdict,
+      score: scored.score,
+      confidence: scored.confidence,
+      signals: scored.signals,
+    });
+  }
+
+  renderBadge(element, scored);
 
   stats.posts += 1;
-  stats.extractMs += post.extractionMs;
-  stats.featureMs += features.computeMs;
-  if (post.truncated) stats.truncated += 1;
-
-  const timing =
-    `${post.extractionMs.toFixed(1)}ms extract, ` +
-    `${features.computeMs.toFixed(1)}ms features`;
+  stats.totalMs += performance.now() - start;
+  stats.verdicts[scored.verdict] += 1;
 
   console.debug(
-    `[unslop] #${stats.posts} ${post.author ?? "unknown"} (${timing}` +
-      `${post.truncated ? ", truncated" : ""}` +
-      `${post.idIsStable ? "" : ", unstable id"})`,
-    { text: post.text, signals, features },
+    `[unslop] ${scored.verdict.toUpperCase()} ${scored.score.toFixed(2)} ` +
+      `${post.author ?? "unknown"} — ${summarize(scored)}`,
   );
 }
 
@@ -75,12 +103,12 @@ Object.assign(globalThis, {
   __unslop: {
     stats: () => ({
       ...stats,
-      avgExtractMs: stats.posts > 0 ? stats.extractMs / stats.posts : 0,
-      avgFeatureMs: stats.posts > 0 ? stats.featureMs / stats.posts : 0,
+      avgMs: stats.posts > 0 ? stats.totalMs / stats.posts : 0,
+      cached: cacheSize(),
     }),
-    /** Compute features for arbitrary text, for console experimentation. */
-    analyze: (text: string) => {
-      const features = extractFeatures({
+    /** Score arbitrary text, for console experimentation. */
+    analyze: (text: string) =>
+      scorePost({
         id: "manual",
         idIsStable: false,
         text,
@@ -91,8 +119,7 @@ Object.assign(globalThis, {
         hasMedia: false,
         isReshare: false,
         extractionMs: 0,
-      });
-      return { features, signals: toSignals(features) };
-    },
+      }),
+    clearCache,
   },
 });
