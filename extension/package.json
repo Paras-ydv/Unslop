@@ -1,0 +1,20 @@
+{
+  "name": "unslop-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LinkedIn content quality / AI slop detector — Chrome extension",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite build --watch --mode development",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

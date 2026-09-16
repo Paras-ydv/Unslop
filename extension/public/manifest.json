@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Unslop — LinkedIn Content Quality",
+  "version": "0.1.0",
+  "description": "Flags low-value and AI-slop posts in your LinkedIn feed, in real time and on-device.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.linkedin.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.linkedin.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
