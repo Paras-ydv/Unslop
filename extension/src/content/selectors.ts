@@ -36,6 +36,12 @@ const POST_SELECTOR = [
   "div[data-urn]",
   "div[data-id]",
   'div[role="article"]',
+  // Newer feed markup wraps each post in an <article>, and some variants put
+  // the urn on a non-div element, so neither of the above matches.
+  "article",
+  "[data-urn]",
+  "[data-id^='urn:li:']",
+  "div.fie-impression-container",
 ].join(",");
 
 /** True when the element is itself a post container. */
@@ -75,6 +81,12 @@ const BODY_SELECTORS = [
   "div.update-components-text",
   "div.feed-shared-inline-show-more-text",
   "span.break-words",
+  // Newer markup variants. `.update-components-update-v2__commentary` is the
+  // current wrapper; the attribute selectors survive class-name rotation.
+  ".update-components-update-v2__commentary",
+  "[class*='update-components-text']",
+  "[class*='description-wrapper']",
+  "[data-test-id*='main-feed-activity-card__commentary']",
 ];
 
 /** Find the element holding the post body text. */
@@ -135,6 +147,37 @@ export function hasMedia(post: HTMLElement): boolean {
 /** Whether the post is a reshare wrapping another post. */
 export function isReshare(post: HTMLElement): boolean {
   return post.querySelector(".update-components-mini-update-v2") !== null;
+}
+
+/** Kept in sync with badge.ts's BADGE_ATTR; duplicated to avoid an import cycle. */
+const BADGE_DIAG_ATTR = "data-unslop-badged";
+
+/**
+ * Report what the selectors can and cannot see on the current page.
+ *
+ * Exposed through `__unslop.diagnose()`. When LinkedIn changes its markup the
+ * symptom is silence — posts are skipped rather than erroring — so this exists
+ * to turn that silence into a specific answer about which layer failed.
+ */
+export function diagnose(): Record<string, unknown> {
+  const root = findFeedRoot();
+  const posts = findPosts(root);
+
+  const sample = posts.slice(0, 5).map((post) => ({
+    urn: readUrn(post),
+    hasBody: findBody(post) !== null,
+    bodyChars: findBody(post)?.innerText?.trim().length ?? 0,
+    author: findAuthor(post),
+    classes: post.className.slice(0, 120),
+  }));
+
+  return {
+    feedRoot: `${root.tagName.toLowerCase()}${root.className ? "." + root.className.split(/\s+/)[0] : ""}`,
+    postsFound: posts.length,
+    withBody: posts.filter((p) => findBody(p) !== null).length,
+    badged: document.querySelectorAll(`[${BADGE_DIAG_ATTR}]`).length,
+    sample,
+  };
 }
 
 /** Outbound links in the post body, excluding LinkedIn's own internal links. */

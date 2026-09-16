@@ -11,6 +11,7 @@ import { extractFeatures } from "../lib/features/vector";
 import { scorePost, summarize } from "../lib/scoring/scorer";
 import { renderBadge } from "./badge";
 import { FeedObserver } from "./observer";
+import { diagnose } from "./selectors";
 
 /** Paths where a post feed can appear. */
 const FEED_PATHS = [/^\/feed\/?/, /^\/in\//, /^\/company\//, /^\/posts\//, /^\/$/];
@@ -74,11 +75,26 @@ let observer: FeedObserver | null = null;
 function startObserving(): void {
   observer?.stop();
   observer = null;
-  if (!onFeedPage()) return;
+
+  if (!onFeedPage()) {
+    // Said out loud rather than returning quietly: "no badges" and "not a feed
+    // page" look identical from the outside, and that ambiguity is the hardest
+    // part of diagnosing a silent extension.
+    console.info("[unslop] not a feed page, idle at", location.pathname);
+    return;
+  }
 
   observer = new FeedObserver({ onPost: handlePost });
   observer.start();
-  console.info("[unslop] observing feed at", location.pathname);
+
+  const found = diagnose();
+  console.info("[unslop] observing", location.pathname, found);
+  if (found["postsFound"] === 0) {
+    console.warn(
+      "[unslop] no posts matched — LinkedIn's markup may have changed. " +
+        "Run __unslop.diagnose() after the feed loads.",
+    );
+  }
 }
 
 /**
@@ -121,5 +137,12 @@ Object.assign(globalThis, {
         extractionMs: 0,
       }),
     clearCache,
+    /** Report what the selectors can see, for diagnosing a silent feed. */
+    diagnose,
+    /** Tear down and re-attach the observers, without reloading the page. */
+    rescan: () => {
+      startObserving();
+      return diagnose();
+    },
   },
 });

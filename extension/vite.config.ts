@@ -46,7 +46,12 @@ export default defineConfig(
         ...shared,
         build: {
           outDir: "dist",
-          emptyOutDir: true,
+          // Never clear `dist`: the popup is emitted by a separate pass, and a
+          // content rebuild that wipes it leaves the manifest pointing at a
+          // missing popup.html — which Chrome rejects, disabling the whole
+          // extension including the content script. `npm run clean` handles
+          // the rare case where a stale-file purge is actually wanted.
+          emptyOutDir: false,
           target: "chrome120",
           minify: false,
           rollupOptions: {

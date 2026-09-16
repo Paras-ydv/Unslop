@@ -5,12 +5,13 @@
   "type": "module",
   "description": "LinkedIn content quality / AI slop detector — Chrome extension",
   "scripts": {
-    "build": "tsc --noEmit && vite build && npm run build:popup",
+    "build": "npm run clean && tsc --noEmit && vite build && npm run build:popup",
     "build:popup": "node scripts/build-popup.mjs",
-    "dev": "vite build --watch --mode development",
+    "dev": "npm run build:popup && vite build --watch --mode development",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "devDependencies": {
     "@types/chrome": "^0.3.0",
