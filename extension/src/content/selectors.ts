@@ -61,24 +61,42 @@ export function isPostElement(el: Element): boolean {
 function findPostsByStructure(scope: Element): HTMLElement[] {
   /** A post is at least this many characters of text. */
   const MIN_TEXT = 80;
-  /** A feed has at least this many sibling posts. */
-  const MIN_SIBLINGS = 3;
+  /** Above this, the element is a feed or page section, not a single post. */
+  const MAX_TEXT = 6000;
 
-  let bestChildren: HTMLElement[] = [];
+  const posts: HTMLElement[] = [];
 
-  for (const container of scope.querySelectorAll<HTMLElement>("div,main,section,ul")) {
-    const children = Array.from(container.children).filter((child): child is HTMLElement => {
-      if (!(child instanceof HTMLElement)) return false;
-      const text = child.innerText?.trim() ?? "";
-      return text.length >= MIN_TEXT;
-    });
+  // Anchor on the author link every post carries. Starting from a marker that
+  // only exists inside a post — rather than from "container with the most
+  // text-bearing children" — is what keeps this from selecting the feed
+  // wrapper and scoring the entire page as one post.
+  const authorLinks = scope.querySelectorAll<HTMLElement>(
+    'a[href*="/in/"], a[href*="/company/"]',
+  );
 
-    if (children.length >= MIN_SIBLINGS && children.length > bestChildren.length) {
-      bestChildren = children;
+  for (const link of authorLinks) {
+    // Walk up until the element looks like a whole post: enough text to be a
+    // body, but not so much that it has swallowed its siblings.
+    let node: HTMLElement | null = link;
+    let candidate: HTMLElement | null = null;
+
+    for (let depth = 0; node && depth < 12; depth++) {
+      const text = node.innerText?.trim().length ?? 0;
+      if (text >= MIN_TEXT && text <= MAX_TEXT) candidate = node;
+      if (text > MAX_TEXT) break;
+      node = node.parentElement;
     }
+
+    if (!candidate) continue;
+    // A post already claimed by an earlier link, or containing one, is the
+    // same post reached from a different anchor.
+    if (posts.some((p) => p === candidate || p.contains(candidate!) || candidate!.contains(p))) {
+      continue;
+    }
+    posts.push(candidate);
   }
 
-  return bestChildren;
+  return posts;
 }
 
 /**
@@ -140,6 +158,8 @@ function findBodyByContent(post: HTMLElement): HTMLElement | null {
   for (const candidate of post.querySelectorAll<HTMLElement>("div,span,p")) {
     const text = candidate.innerText?.trim() ?? "";
     if (text.length < 40) continue;
+    // Anything this long is a container of several posts, not one post's body.
+    if (text.length > 6000) continue;
 
     // Prefer the innermost element holding the text: a candidate whose child
     // carries nearly the same text is a wrapper, not the body itself.
