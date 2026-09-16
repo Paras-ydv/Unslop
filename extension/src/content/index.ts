@@ -57,7 +57,7 @@ function handlePost(post: ExtractedPost, element: HTMLElement): void {
     });
   }
 
-  renderBadge(element, scored);
+  renderBadge(element, post, scored);
 
   stats.posts += 1;
   stats.totalMs += performance.now() - start;

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Unslop</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        width: 300px; margin: 0; padding: 14px;
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+      }
+      h1 { margin: 0 0 2px; font-size: 15px; }
+      .sub { margin: 0 0 12px; opacity: 0.65; font-size: 11.5px; }
+
+      .row { display: flex; justify-content: space-between; padding: 3px 0; }
+      .row .value { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+      .bars { display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+              margin: 8px 0 12px; background: rgba(128, 128, 128, 0.2); }
+      .bars i { display: block; }
+      .bars .green { background: #1a7f37; }
+      .bars .yellow { background: #bf8700; }
+      .bars .red { background: #c4351b; }
+
+      .progress { margin: 10px 0; }
+      .track { height: 6px; border-radius: 3px; background: rgba(128,128,128,0.2); overflow: hidden; }
+      .track i { display: block; height: 100%; background: #0a66c2; }
+
+      .actions { display: flex; gap: 6px; margin-top: 12px; }
+      button {
+        flex: 1; padding: 6px 8px; font-size: 12px; font-weight: 600;
+        border-radius: 6px; border: 1px solid rgba(128, 128, 128, 0.4);
+        background: transparent; color: inherit; cursor: pointer;
+      }
+      button:hover:not(:disabled) { background: rgba(128, 128, 128, 0.12); }
+      button:disabled { opacity: 0.45; cursor: default; }
+      button.danger:hover:not(:disabled) { background: rgba(196, 53, 27, 0.14); }
+
+      .note { margin-top: 10px; font-size: 11px; opacity: 0.6; }
+      .empty { opacity: 0.65; font-style: italic; padding: 6px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Unslop</h1>
+    <p class="sub">Local labels for training. Nothing is uploaded.</p>
+
+    <div id="content"></div>
+
+    <div class="actions">
+      <button id="export" type="button">Export JSONL</button>
+      <button id="clear" class="danger" type="button">Clear</button>
+    </div>
+
+    <p class="note">
+      Target for phase 5 is 300–500 labels. Label posts by opening
+      &ldquo;Why?&rdquo; on a badge and marking the correct verdict.
+    </p>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

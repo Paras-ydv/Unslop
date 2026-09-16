@@ -6,7 +6,8 @@
  * `button`, `span`, and `div`, and this is the only reliable way to opt out.
  */
 
-import type { Signal, Verdict } from "@shared/types";
+import type { ExtractedPost, Signal, Verdict } from "@shared/types";
+import { SCORER_VERSION, saveLabel } from "../lib/labels";
 import { type ScoredPost, summarize, verdictLabel } from "../lib/scoring/scorer";
 
 /** Marks a post that already carries a badge. */
@@ -75,6 +76,22 @@ const STYLES = `
     opacity: 0.7; font-size: 11.5px;
   }
 
+  .correct {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .correct span { opacity: 0.7; font-size: 11.5px; }
+  .fix {
+    cursor: pointer; border: 1px solid var(--border); background: transparent;
+    color: var(--text); font-size: 11.5px; font-weight: 600;
+    padding: 2px 8px; border-radius: 6px;
+  }
+  .fix:hover { background: rgba(0, 0, 0, 0.05); }
+  .fix:focus-visible { outline: 2px solid var(--dot); outline-offset: 1px; }
+  .fix[aria-pressed="true"] { background: var(--dot); color: #fff; border-color: var(--dot); }
+  .thanks { font-size: 11.5px; opacity: 0.8; }
+
   @media (prefers-color-scheme: dark) {
     .bar, .panel { background: rgba(255, 255, 255, 0.04); }
     .why:hover { background: rgba(255, 255, 255, 0.08); }
@@ -101,8 +118,66 @@ function signalItem(signal: Signal): HTMLLIElement {
   return li;
 }
 
+const VERDICT_ORDER: Verdict[] = ["green", "yellow", "red"];
+
+/**
+ * Build the correction row.
+ *
+ * This is the phase-4 data collection point: disagreements recorded here become
+ * the training set for phase 5. It sits inside the "Why?" panel rather than on
+ * the badge itself, so labeling is deliberate — a stray click while scrolling
+ * should not poison the dataset.
+ */
+function buildCorrectionRow(post: ExtractedPost, scored: ScoredPost): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "correct";
+
+  const prompt = document.createElement("span");
+  prompt.textContent = "Wrong? Mark it:";
+  row.append(prompt);
+
+  const buttons: HTMLButtonElement[] = [];
+
+  for (const verdict of VERDICT_ORDER) {
+    const button = document.createElement("button");
+    button.className = "fix";
+    button.type = "button";
+    button.textContent = verdictLabel(verdict);
+    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", `Mark this post as ${verdictLabel(verdict)}`);
+
+    button.addEventListener("click", () => {
+      for (const other of buttons) other.setAttribute("aria-pressed", "false");
+      button.setAttribute("aria-pressed", "true");
+
+      void saveLabel({
+        postId: post.id,
+        text: post.text,
+        label: verdict,
+        predicted: scored.verdict,
+        score: scored.score,
+        at: new Date().toISOString(),
+        scorerVersion: SCORER_VERSION,
+      });
+
+      let note = row.querySelector<HTMLElement>(".thanks");
+      if (!note) {
+        note = document.createElement("span");
+        note.className = "thanks";
+        row.append(note);
+      }
+      note.textContent = "Saved locally ✓";
+    });
+
+    buttons.push(button);
+    row.append(button);
+  }
+
+  return row;
+}
+
 /** Build the expandable explanation panel. */
-function buildPanel(scored: ScoredPost): HTMLElement {
+function buildPanel(post: ExtractedPost, scored: ScoredPost): HTMLElement {
   const panel = document.createElement("div");
   panel.className = "panel";
   panel.hidden = true;
@@ -122,6 +197,8 @@ function buildPanel(scored: ScoredPost): HTMLElement {
   meta.textContent = parts.join(" · ");
   panel.append(meta);
 
+  panel.append(buildCorrectionRow(post, scored));
+
   return panel;
 }
 
@@ -131,9 +208,13 @@ function buildPanel(scored: ScoredPost): HTMLElement {
  * Returns silently if the post is already badged, so a re-render or a repeated
  * scan cannot stack duplicates.
  */
-export function renderBadge(post: HTMLElement, scored: ScoredPost): void {
-  if (post.hasAttribute(BADGE_ATTR)) return;
-  post.setAttribute(BADGE_ATTR, scored.verdict);
+export function renderBadge(
+  element: HTMLElement,
+  post: ExtractedPost,
+  scored: ScoredPost,
+): void {
+  if (element.hasAttribute(BADGE_ATTR)) return;
+  element.setAttribute(BADGE_ATTR, scored.verdict);
 
   const host = document.createElement("div");
   host.setAttribute("data-unslop-badge", "");
@@ -172,7 +253,7 @@ export function renderBadge(post: HTMLElement, scored: ScoredPost): void {
 
   bar.append(dot, verdict, reason, why);
 
-  const panel = buildPanel(scored);
+  const panel = buildPanel(post, scored);
   why.addEventListener("click", () => {
     const open = !panel.hidden;
     panel.hidden = open;
@@ -185,11 +266,11 @@ export function renderBadge(post: HTMLElement, scored: ScoredPost): void {
   // Insert above the post body so the verdict is visible before the content is
   // read, which is the whole point — the badge should inform the decision to
   // read, not annotate it afterwards.
-  post.prepend(host);
+  element.prepend(host);
 }
 
 /** Remove any badge from a post, so it can be re-rendered. */
-export function clearBadge(post: HTMLElement): void {
-  post.removeAttribute(BADGE_ATTR);
-  post.querySelector(":scope > [data-unslop-badge]")?.remove();
+export function clearBadge(element: HTMLElement): void {
+  element.removeAttribute(BADGE_ATTR);
+  element.querySelector(":scope > [data-unslop-badge]")?.remove();
 }
