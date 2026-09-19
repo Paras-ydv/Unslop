@@ -107,6 +107,15 @@ function render(labels: Label[]): void {
  *
  * Uses `chrome.downloads` rather than an anchor click: the popup closes as soon
  * as it loses focus, which can cancel a link-triggered download mid-flight.
+ *
+ * Always the same path and always overwriting, so the export lands in one known
+ * file the repo can read rather than accumulating dated copies in Downloads. A
+ * relative `filename` is resolved against Chrome's download directory, which is
+ * the only place an extension may write — point that at the repo (see
+ * `labels/README.md`) and Export becomes "write the dataset into the project".
+ *
+ * `saveAs: false` keeps it a single click. Chrome still refuses paths outside
+ * the download directory, so this cannot write anywhere unexpected.
  */
 async function exportLabels(): Promise<void> {
   const labels = await allLabels();
@@ -114,13 +123,13 @@ async function exportLabels(): Promise<void> {
 
   const blob = new Blob([toJsonl(labels)], { type: "application/x-ndjson" });
   const url = URL.createObjectURL(blob);
-  const stamp = new Date().toISOString().slice(0, 10);
 
   try {
     await chrome.downloads.download({
       url,
-      filename: `unslop-labels-${stamp}.jsonl`,
-      saveAs: true,
+      filename: "unslop/labels.jsonl",
+      saveAs: false,
+      conflictAction: "overwrite",
     });
   } finally {
     // Revoke once the download has had a chance to start.

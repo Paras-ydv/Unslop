@@ -21,7 +21,7 @@ See [plan.md](plan.md) for the full build plan and known problems.
 | 2 | Feature engine | ✅ Done |
 | 3 | Rule engine and panel UI | ✅ Done |
 | 4 | Labeled dataset | ⚠️ Mechanism done, 0 labels collected |
-| 5 | Local ML model | ⬜ Blocked on phase 4 data |
+| 5 | Fit the weights from labels | ⬜ Blocked on phase 4 data |
 | 6 | Backend (optional) | ⬜ Not started |
 
 The scoring pipeline is complete and the panel renders. Post **detection** was
@@ -47,6 +47,7 @@ extension/
   src/popup/        Label progress and JSONL export
   public/           manifest.json
 shared/             Types shared between extension and backend
+labels/             Collected dataset — gitignored, see labels/README.md
 plan.md             Build plan and known problems
 ```
 
@@ -152,14 +153,51 @@ That is why informational density carries the heaviest weight of any feature
 group, and why the corpus includes posts that are heavily formatted *and*
 substantive — they must survive.
 
-## Contributing labels
+## Collecting labels
 
-Expand any row in the panel and mark the correct verdict. Labels are stored
-locally via `chrome.storage.local` and never transmitted. The toolbar popup
-shows progress and class balance, and exports everything as JSONL for phase 5.
+Expand any row in the panel and rate the post **1–5** — 1 is a great read, 5 is
+slop. Each button names its point on hover (`2 — Good: worth reading, carries
+something concrete`), because the scale is only worth its extra cost if 2 means
+the same thing in month two as in week one.
 
-Class balance matters more than raw count — 400 labels that are 90% red will
-train badly.
+Ratings collapse to the three verdicts for scoring, but **1–5 is what gets
+stored**: collapsing is one-way, so recording only the coarse form would freeze
+both the class boundaries and the thresholds into the dataset. See problem #18
+in [plan.md](plan.md).
+
+Labels are written to `chrome.storage.local` immediately and never transmitted.
+
+### Getting the dataset into the repo
+
+A Chrome extension cannot write to arbitrary paths — downloads are the only
+channel — so point Chrome's download directory at the repo once:
+
+1. `chrome://settings/downloads`
+2. **Location** → Change → `<repo>/labels`
+3. Leave **"Ask where to save each file"** off
+
+**Export** in the toolbar popup then writes `labels/unslop/labels.jsonl` in one
+click, overwriting the previous file. Full setup and the row format are in
+[labels/README.md](labels/README.md).
+
+Export often, not just when you are ready to train. `chrome.storage.local` is
+per-profile and per-machine: a cleared profile, a different browser or a new
+laptop loses everything that is not in the file. `labels/*.jsonl` is gitignored
+— the dataset is other people's posts and does not belong in a public repo.
+
+### What to watch while collecting
+
+- **Class balance beats raw count.** 400 labels that are 90% red train badly.
+  The popup shows the split; deliberately seek out the thin classes.
+- **The 1–5 spread, also in the popup.** If the counts pile onto 1, 3 and 5,
+  the middle points are not being used in practice and the granularity is
+  costing effort without buying resolution — worth knowing early, while
+  collapsing back is still free.
+- **Rate the post, not the scorer.** Agreeing with a verdict you think is wrong
+  teaches nothing; the disagreements are where the information is.
+- **A failed save says so.** The row shows "NOT SAVED — storage failed" in red
+  rather than a tick. Storage errors used to be swallowed, which meant a full
+  quota could drop an entire session while the panel kept confirming.
 
 ## Open issues
 
@@ -399,7 +437,7 @@ reported dozens of skips and `report()` concluded the body selectors were stale.
 ### 5. Dogfooding has not started — blocks phase 5
 
 **Zero real labels have been collected.** The mechanism is built (correction
-buttons in each panel row, storage, JSONL export) but no data exists, and phase
+controls in each panel row, storage, JSONL export) but no data exists, and phase
 5's classifier cannot begin without it.
 
 The target is 300–500 labels. Three things matter while collecting:
@@ -427,19 +465,22 @@ real-world accuracy estimate, and should not be quoted as one.
 
 ### 7. Smaller known gaps
 
-- **Truncated posts — depends on how LinkedIn collapses them, which is
-  unmeasured.** The body is now read two ways: rendered (`innerText`) and from
-  the markup, walking block boundaries to rebuild line structure without a
-  layout flush. If LinkedIn clamps a long post with CSS, the full text is in the
-  markup and only the painting is clipped, so the markup read recovers it with
-  no click at all. If LinkedIn swaps in a shortened text node, the two reads
-  agree and the click is still the only option. The extractor prefers whichever
-  source holds more, and only clicks when the markup had nothing extra.
+- **Truncated posts — checked on the live feed, reading the whole post.** The
+  body is read two ways: rendered (`innerText`) and from the markup, walking
+  block boundaries to rebuild line structure without a layout flush. If LinkedIn
+  clamps a long post with CSS, the full text is in the markup and only the
+  painting is clipped, so the markup read recovers it with no click at all. If
+  LinkedIn swaps in a shortened text node, the two reads agree and the click is
+  the only option. The extractor prefers whichever source holds more, and only
+  clicks when the markup had nothing extra.
 
-  **Which case the live feed is in has not been measured.** Run
-  `__unslop.truncation()` with a few long posts on screen; it says which
-  mechanism is in use and how much text, if any, is being recovered. That answer
-  decides whether `tryExpand` can be deleted outright.
+  Spot-checked while dogfooding: full post text is reaching the scorer, so
+  verdicts are not being computed on hook lines. That was the open question
+  here, and it mattered most for phase 4 — a label attached to a hook line is
+  wrong training data rather than a scoring bug. `__unslop.truncation()` remains
+  for re-checking after a LinkedIn change, and whether `tryExpand` can now be
+  deleted outright is still worth settling, since it clicks "see more" on a real
+  feed for a benefit that may never arrive.
 
   Recovering text only ever *appends* to what was already rendered — the
   rendered text must be a prefix of the markup text. "Markup is longer" alone is

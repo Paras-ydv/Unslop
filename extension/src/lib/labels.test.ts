@@ -95,10 +95,16 @@ describe("label storage", () => {
     expect(await allLabels()).toEqual([]);
   });
 
-  it("degrades quietly when the storage API is missing", async () => {
+  it("reports failure rather than throwing when storage is missing", async () => {
     vi.stubGlobal("chrome", undefined);
-    await expect(saveLabel(label("p1", "red", "green"))).resolves.toBeUndefined();
+    // False, not undefined: the caller has to be able to tell the user the
+    // rating did not land. Silently resolving is how a session gets lost.
+    await expect(saveLabel(label("p1", "red", "green"))).resolves.toBe(false);
     expect(await allLabels()).toEqual([]);
+  });
+
+  it("reports success when the write lands", async () => {
+    await expect(saveLabel(label("p1", "red", "green"))).resolves.toBe(true);
   });
 
   it("treats a malformed stored value as empty", async () => {

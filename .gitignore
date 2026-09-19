@@ -11,3 +11,6 @@ venv/
 .DS_Store
 .vscode/
 .idea/
+
+# Collected labels — other people's posts, not for the public repo
+labels/**/*.jsonl

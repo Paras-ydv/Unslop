@@ -5,6 +5,7 @@
   "description": "Flags low-value and AI-slop posts in your LinkedIn feed, in real time and on-device.",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "downloads"
   ],
   "host_permissions": [

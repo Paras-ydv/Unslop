@@ -19,7 +19,7 @@ data-collection target that only dogfooding can reach.
 | 2 — Feature engine | Done | 27 features across 4 groups, 31-post corpus |
 | 3 — Rule engine & panel | Done | 27/31 exact (87%), zero inversions |
 | 4 — Labeled dataset | Mechanism done | Correction UI + JSONL export; **0 labels collected so far** |
-| 5 — Local ML model | Not started | Blocked on phase 4 data |
+| 5 — Fit the weights | Not started | Blocked on phase 4 data; revised from an ONNX model to fitting `weights.ts` |
 | 6 — Backend | Not started | Optional |
 
 ---
@@ -112,16 +112,129 @@ This *is* the training set — without it, Phase 5 has nothing to train on.
 
 ---
 
-## Phase 5 — Local ML Model  *(component 4)*
+## Phase 5 — Fit the weights  *(component 4)*
 
-Only now. Train a small classifier — start with logistic regression or gradient
-boosting over Phase 2 features, which is likely enough. Upgrade to a fine-tuned
-MiniLM only if the hand-built features plateau.
+**Revised.** The original plan shipped an ONNX model into the extension and let
+it handle the uncertain band. That is more machinery than the problem needs,
+because of one thing already true of the code:
 
-Export to ONNX, run via `onnxruntime-web` in the extension. The rule engine
-handles confident cases; the model handles the uncertain band.
+> **The rule engine is already a linear model.** Features, weights, a bias, a
+> logistic squash. The only thing separating it from a trained classifier is
+> that a person set the coefficients by hand.
 
-**Milestone:** measurable accuracy gain over Phase 3 on a held-out set.
+So "train a model" and "fit the weights" can be the same operation. Fit a
+linear model offline, take its coefficients, and write them into
+`weights.ts`. Nothing ships but numbers.
+
+What that keeps, all of which the ONNX route gives up:
+
+- **Speed.** Still a weighted sum. No `onnxruntime-web`, no WASM payload in a
+  content script, no inference inside the 150ms budget.
+- **Honest explanations.** A linear model's contribution *is* `value × weight`,
+  which is exactly what the panel already renders. Pulling reasons out of an
+  opaque model means SHAP-style attribution — an approximation of the model's
+  behaviour, where this is the arithmetic itself.
+- **Reviewability.** A coefficient change is a diff. It can be read, argued
+  with, and reverted.
+
+The trade is real and worth naming: a linear fit cannot learn feature
+*interactions*. If it plateaus below the hand-tuned weights and the errors look
+like "numbers plus bait behaves differently from numbers alone", that is the
+signal to revisit a non-linear model — and the plateau is what earns it.
+
+### The model
+
+**Regularized multinomial logistic regression** (L2). Not gradient boosting,
+for two reasons: it must stay linear to fold into `weights.ts` at all, and at
+300–500 labels over 27 features — 11–18 examples per feature — anything more
+expressive overfits without enough held-out data to notice.
+
+Fit against the 1–5 `rating`, which is what the finer scale in problem #18
+bought. Thresholds are then derived rather than assumed. Fall back to the
+3-class target if the ordinal fit proves unstable at this size.
+
+### Where the data comes from
+
+`chrome.storage.local`, already written by the phase-4 correction UI. Each row
+carries the three things a fit needs and nothing else is required:
+
+| Field | What |
+| --- | --- |
+| `text` | the post, so features can be **recomputed** rather than trusted |
+| `predicted` + `score` | what the rule engine said at label time |
+| `rating` | what the human said, 1–5 |
+
+No database. A few hundred JSONL rows is a file, not a schema, and keeping it
+in the browser preserves the property that nothing leaves the device.
+
+**Labels are append-only and never deleted.** Training reads them; it does not
+consume them. Deleting after a fit would break refitting after a detector
+change, comparing two fits on the same data, cross-validation, and simple
+accumulation — 300 labels is a floor, and a fit at 600 is better only if the
+first 300 still exist. They are the most expensive artifact in the project: one
+post of attention each, and not regenerable. Export periodically as a backup,
+because `chrome.storage.local` is per-profile and per-machine.
+
+### Weights are frozen at build time
+
+The extension never fits anything, and never adjusts a weight while the feed is
+open. The cycle is entirely offline:
+
+```
+label while scrolling  →  export JSONL  →  fit offline
+                                              ↓
+                       reload  ←  rebuild  ←  paste coefficients
+```
+
+A post read today is scored by coefficients fitted from data labeled before
+today. This is a correctness requirement, not a preference: live-updating
+weights would make the same post score differently depending on when it was
+seen, drift verdicts mid-session, and leave the fixture corpus unable to pin any
+behaviour at all. `weights.ts` stays a checked-in constant — the only thing
+phase 5 changes is who wrote the numbers.
+
+### The training script
+
+Offline, Python, run by hand. Not part of the build.
+
+1. Read the JSONL export.
+2. **Recompute features from `text`.** Never read stored feature values — this
+   is what keeps labels valid across detector changes, so editing a detector
+   means refitting, not re-labeling.
+3. Fit L2 logistic regression.
+4. **5-fold cross-validation**, not a single split. A 20% test set of 300 rows
+   is 60 posts, far too few for a stable accuracy number.
+5. Emit a `weights.ts` block to paste in.
+
+### Verification, before anything is adopted
+
+A fit can be worse than the hand-tuned weights. The point of this gate is to be
+able to see that rather than assume the fitted numbers win:
+
+- **The fixture corpus must not regress.** Currently 27/31 exact, zero
+  inversions. Fitted weights that invert a green fixture to red do not ship,
+  whatever their cross-validated accuracy.
+- **Compare on the same held-out labels** — fitted versus hand-tuned. If
+  hand-tuned wins, keep them and record that it did.
+- **Check the signs.** A fit that makes `numberDensity` positive, so more
+  concrete numbers means more slop, is reporting a problem with the data, not a
+  discovery about the world. At this sample size that is a live risk.
+
+### What this cannot tell you
+
+300–500 labels from one person's feed fits *that person's* taste on *that
+person's* professional network. It is a legitimate goal for a personal tool and
+it is not "learning what slop is". The resulting accuracy number does not
+transfer to another feed and should not be quoted as if it does — the same
+caveat problem #12 makes about the synthetic corpus, one level up.
+
+There is also a real chance the fit does not beat the hand-tuned weights at this
+size. That is a useful result, and worth reporting plainly rather than tuning
+until the fitted numbers look better.
+
+**Milestone:** a cross-validated comparison of fitted against hand-tuned
+weights, on real labels, with the corpus held at zero inversions — whichever
+side wins.
 
 ---
 

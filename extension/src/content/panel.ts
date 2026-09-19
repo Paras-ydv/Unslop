@@ -226,6 +226,7 @@ const STYLES = `
   .fix.r4 { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); }
   .fix.r5 { border-color: var(--red); }
   .fix[aria-pressed="true"] { background: var(--text); color: var(--surface); }
+  .thanks.failed { color: var(--red); font-weight: 700; }
   .fix[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: var(--text); }
   .thanks { color: var(--muted); font-size: 11px; width: 100%; }
 
@@ -441,6 +442,16 @@ class Panel {
         for (const other of buttons) other.setAttribute("aria-pressed", "false");
         button.setAttribute("aria-pressed", "true");
 
+        let note = row.querySelector<HTMLElement>(".thanks");
+        if (!note) {
+          note = el("span", "thanks");
+          row.append(note);
+        }
+        note.textContent = "Saving…";
+
+        // The confirmation waits for the write. Claiming "Saved" before the
+        // storage call resolves is how a full quota loses a whole session
+        // without anyone noticing.
         void saveLabel({
           postId: post.id,
           text: post.text,
@@ -450,14 +461,12 @@ class Panel {
           score: scored.score,
           at: new Date().toISOString(),
           scorerVersion: SCORER_VERSION,
+        }).then((saved) => {
+          note.className = saved ? "thanks" : "thanks failed";
+          note.textContent = saved
+            ? `Saved: ${point.rating} · ${point.label} ✓`
+            : "NOT SAVED — storage failed, see console";
         });
-
-        let note = row.querySelector<HTMLElement>(".thanks");
-        if (!note) {
-          note = el("span", "thanks");
-          row.append(note);
-        }
-        note.textContent = `Saved: ${point.rating} · ${point.label} ✓`;
       });
 
       buttons.push(button);

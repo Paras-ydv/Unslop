@@ -129,16 +129,26 @@ export async function allLabels(): Promise<Label[]> {
  *
  * Re-labeling is normal — the user may correct themselves — and keeping both
  * rows would put contradictory examples into the training set.
+ *
+ * Returns whether the write landed, so the UI can say so. It must not throw:
+ * a storage failure cannot be allowed to break the feed.
  */
-export async function saveLabel(label: Label): Promise<void> {
-  if (!hasStorage()) return;
+export async function saveLabel(label: Label): Promise<boolean> {
+  if (!hasStorage()) return false;
   try {
     const existing = await allLabels();
     const deduped = existing.filter((row) => row.postId !== label.postId);
     deduped.push(label);
     await chrome.storage.local.set({ [STORAGE_KEY]: deduped });
-  } catch {
-    // Storage failures must not break the feed; the label is simply lost.
+    return true;
+  } catch (err) {
+    // Reported rather than swallowed. A write can fail for a quota that
+    // `unlimitedStorage` did not cover or a profile whose storage is in a bad
+    // state, and the old silent catch meant the panel still said "Saved" while
+    // every rating in the session was being dropped. Weeks of labeling is
+    // exactly the thing that must never fail quietly.
+    console.error("[unslop] label not saved:", err);
+    return false;
   }
 }
 
