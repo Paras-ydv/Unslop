@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExtractedPost, Verdict } from "@shared/types";
 import { FIXTURES, type Fixture } from "../features/fixtures";
+import { informativeness } from "../features/vector";
 import { scorePost, summarize, verdictLabel } from "./scorer";
 import { THRESHOLDS } from "./weights";
 
@@ -145,7 +146,7 @@ describe("explanations", () => {
     expect(result.signals[0]!.weight).toBeGreaterThan(0);
   });
 
-  it("leads with signals that explain the verdict, strongest first", () => {
+  it("leads with signals that explain the verdict, most informative first", () => {
     for (const { fixture, result } of scored) {
       const leading = result.verdict === "green" ? -1 : 1;
       const sides = result.signals.map((s) => Math.sign(s.weight));
@@ -157,14 +158,29 @@ describe("explanations", () => {
         expect(firstOpposing, fixture.id).toBeGreaterThan(lastLeading);
       }
 
-      // Within each side, magnitude descends.
+      // Within each side, the informativeness-weighted rank descends — not raw
+      // magnitude. A feature firing on most posts explains little, so a smaller
+      // contribution from a rare feature legitimately outranks a larger one
+      // from a common feature.
       for (const side of [leading, -leading]) {
-        const magnitudes = result.signals
+        const ranks = result.signals
           .filter((s) => Math.sign(s.weight) === side)
-          .map((s) => Math.abs(s.weight));
-        expect([...magnitudes].sort((a, b) => b - a), fixture.id).toEqual(magnitudes);
+          .map((s) => Math.abs(s.weight) * informativeness(s.key));
+        expect([...ranks].sort((a, b) => b - a), fixture.id).toEqual(ranks);
       }
     }
+  });
+
+  it("ranks a rare signal above a more common one of similar size", () => {
+    // The concrete regression behind the reordering: `sentenceUniformity` fires
+    // on 72% of the corpus and `ctaPhrases` on 34%, so a near-equal pair must
+    // lead with the engagement ask rather than the rhythm observation.
+    expect(informativeness("ctaPhrases")).toBeGreaterThan(
+      informativeness("sentenceUniformity"),
+    );
+    expect(informativeness("oneSentencePerLineRatio")).toBeLessThan(
+      informativeness("numberDensity"),
+    );
   });
 
   it("has a label for every verdict", () => {

@@ -71,12 +71,53 @@ function detectHookPattern(text: string, lines: string[]): number {
   return clamp01(score);
 }
 
-/** Lines in all caps, or ending in "!!" / "??" — typographic shouting. */
+/**
+ * A capitalised run inside an otherwise normal line.
+ *
+ * Five letters or more, or one of the short emphasis words. The length floor is
+ * the whole difficulty: an acronym is also a capitalised run, and "the API
+ * returned 500" is not shouting. Five clears the common technical ones (API,
+ * SQL, CEO, HTTP, JSON) at the cost of missing a shouted five-letter word, which
+ * is the right trade — a false positive here penalises exactly the substantive
+ * technical posts the scorer is meant to defend.
+ *
+ * The allowlist buys back the short words that carry emphasis and are never
+ * acronyms. It is a closed set of English intensifiers, so it does not
+ * generalise; a non-English feed gets the length rule only, which is a known
+ * limit rather than a silent one.
+ */
+const SHOUTED_WORD =
+  /(?:^|[^\p{L}])(?:\p{Lu}{5,}|NOT|NEVER|ALL|ONLY|MUST|STOP|EVERY|NOW)(?:[^\p{L}]|$)/u;
+
+/**
+ * Lines in all caps, ending in "!!" / "??", or shouting a word mid-sentence.
+ *
+ * The whole-line test alone was close to dead: it needs *every* letter on the
+ * line capitalised, and real typographic shouting is one word inside an
+ * otherwise ordinary sentence — "AI will change EVERYTHING about how we work."
+ * The corpus's own shouting fixture scored 0.17, because only its headline was
+ * fully capitalised, so a feature written for that fixture did not fire on it.
+ *
+ * An embedded caps run has to be multi-letter to count, or every acronym in a
+ * technical post reads as shouting — "the API returned 500" is not shouting,
+ * and false-positiving on substantive posts is the expensive direction. Four
+ * letters clears the common ones (API, SQL, CEO, GPU) while still catching
+ * NEVER, ALWAYS and EVERYTHING; `\p{Lu}` rather than `A-Z` so it does not
+ * quietly treat non-Latin scripts as never shouting.
+ */
 function isShouting(line: string): boolean {
-  if (/[!?]{2,}$/.test(line)) return true;
+  // Anchored past trailing emoji and whitespace, not at the raw end: "see
+  // this!! 👇" is the same shout as "see this!!", and requiring `$` missed
+  // every line that closed with a pointer emoji — which slop reliably does.
+  if (/[!?]{2,}[^\p{L}\p{N}]*$/u.test(line)) return true;
+
   const letters = line.replace(/[^\p{L}]/gu, "");
-  if (letters.length < 4) return false;
-  return letters === letters.toUpperCase();
+  if (letters.length >= 4 && letters === letters.toUpperCase()) return true;
+
+  // A shouted word inside a normal line. Requires a lowercase letter somewhere,
+  // so a fully-capitalised line is not counted twice by a different rule.
+  if (!/\p{Ll}/u.test(line)) return false;
+  return SHOUTED_WORD.test(line);
 }
 
 /** Compute all structural features for a post. */

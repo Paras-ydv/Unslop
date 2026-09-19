@@ -3,6 +3,8 @@
  *
  * The vector order is a stable contract: phase 5 trains a classifier against
  * these indices, so entries are only ever appended, never reordered or removed.
+ * That contract binds once a model exists. `lexicalDiversity` was removed
+ * before one did (problem #16) — the last moment such a change is free.
  *
  * No scoring or thresholding happens here — that is the rule engine's job in
  * phase 3. This module's only opinions are which features exist and how a
@@ -59,7 +61,6 @@ export const FEATURE_KEYS = [
   { key: "vagueness", group: "informational", direction: "slop", label: "Vague quantities instead of figures" },
   { key: "firstPersonRatio", group: "informational", direction: "neutral", label: "First-person account" },
   { key: "prescriptiveness", group: "informational", direction: "slop", label: "Generic prescriptive advice" },
-  { key: "lexicalDiversity", group: "informational", direction: "quality", label: "Varied vocabulary" },
 
   // Engagement bait
   { key: "ctaPhrases", group: "engagementBait", direction: "slop", label: "Asks for likes or comments" },
@@ -75,6 +76,87 @@ export interface FeatureDescriptor {
   group: "structural" | "linguistic" | "informational" | "engagementBait";
   direction: "slop" | "quality" | "neutral";
   label: string;
+}
+
+/**
+ * How often each feature fires, at or above `SIGNAL_FLOOR`, across the corpus.
+ *
+ * A feature that fires on nearly every post carries nearly no information, and
+ * saying it out loud is worse than saying nothing: the panel spent a row on
+ * "Varied vocabulary" — true of every fixture — while the signal that
+ * actually separated this post sat below the fold. (That feature is gone; the
+ * ranking that demoted it stays, because the next one will not be so obvious.) `informativeness()` turns
+ * these rates into a display multiplier so the explanation leads with what was
+ * discriminating rather than with whatever ratio happened to be largest.
+ *
+ * These weight the *explanation* only. The score is unaffected: a common
+ * feature can still be the correct reason, and down-ranking it in the score
+ * would be double-counting what the weights already encode.
+ *
+ * Measured, not estimated — regenerate with `npm run rates` after changing a
+ * detector or the floor, since both move these numbers. Expect them to move
+ * again once real labels replace the synthetic corpus (problem #12): they
+ * describe fixtures written to span the pattern space, not a real feed.
+ * Anything absent defaults to 0.5.
+ */
+export const FIXTURE_FIRE_RATES: Readonly<Record<string, number>> = {
+  hookPattern: 0.9,
+  oneSentencePerLineRatio: 0.81,
+  sentenceUniformity: 0.55,
+  numberDensity: 0.48,
+  lineUniformity: 0.45,
+  entityDensity: 0.39,
+  tricolon: 0.32,
+  ctaPhrases: 0.32,
+  questionDensity: 0.32,
+  closingHook: 0.32,
+  shortLineRatio: 0.29,
+  firstPersonRatio: 0.29,
+  pointerEmoji: 0.26,
+  emDashDensity: 0.23,
+  hookOpeners: 0.19,
+  bulletLineRatio: 0.13,
+  emojiDensity: 0.13,
+  citationDensity: 0.13,
+  hyperbole: 0.1,
+  antithesis: 0.1,
+  vagueness: 0.1,
+  hashtagDensity: 0.1,
+  authorityBait: 0.06,
+  shoutingRatio: 0.03,
+  corporateFiller: 0.03,
+  llmTells: 0.03,
+  prescriptiveness: 0.03,
+};
+
+/**
+ * Minimum feature value worth naming in the "Why?" panel.
+ *
+ * Raised from 0.3: at that floor a post with nothing notable still filled every
+ * row, which reads as evidence and is not. Five weak reasons are less honest
+ * than two real ones, and an explanation with nothing in it is a fair thing for
+ * the panel to say — the verdict still stands on the full weighted sum either
+ * way, since this governs display only.
+ */
+export const SIGNAL_FLOOR = 0.42;
+
+/**
+ * Display multiplier for a feature, from how commonly it fires.
+ *
+ * Inverse-frequency, the same intuition as IDF: a feature firing on every post
+ * tells the reader nothing, one firing on a tenth of them is the reason. The
+ * floor keeps a common-but-genuine signal visible rather than suppressed — this
+ * reorders the explanation, it does not censor it.
+ *
+ * A 0% rate reads as "never seen in the corpus", which is not evidence of
+ * rarity in the wild — `shoutingRatio` fires on live posts and on no fixture.
+ * Those clamp to the same multiplier as a rare-but-seen feature instead of
+ * scoring as maximally informative on no evidence.
+ */
+export function informativeness(key: string): number {
+  const rate = FIXTURE_FIRE_RATES[key] ?? 0.5;
+  if (rate <= 0) return 1.4;
+  return Math.max(0.35, Math.min(1.4, 1 / (0.35 + rate)));
 }
 
 /** Fixed-length numeric vector, ordered by `FEATURE_KEYS`. */
@@ -125,23 +207,27 @@ export function toVector(features: FeatureSet): FeatureVector {
  * "Why?" panel can take the top N.
  */
 export function toSignals(features: FeatureSet, limit = 5): Signal[] {
-  const signals: Signal[] = [];
+  const signals: { signal: Signal; rank: number }[] = [];
 
   for (const descriptor of FEATURE_KEYS) {
     if (descriptor.direction === "neutral") continue;
     const value = readFeature(features, descriptor);
-    if (value < 0.3) continue;
+    if (value < SIGNAL_FLOOR) continue;
 
     signals.push({
-      key: descriptor.key,
-      label: descriptor.label,
-      weight: descriptor.direction === "quality" ? -value : value,
+      signal: {
+        key: descriptor.key,
+        label: descriptor.label,
+        weight: descriptor.direction === "quality" ? -value : value,
+      },
+      rank: value * informativeness(descriptor.key),
     });
   }
 
   return signals
-    .sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight))
-    .slice(0, limit);
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, limit)
+    .map((entry) => entry.signal);
 }
 
 /** Every phrase that fired, across both phrase-matching detectors. */

@@ -30,7 +30,7 @@
  */
 
 import type { ExtractedPost, Signal, Verdict } from "@shared/types";
-import { SCORER_VERSION, saveLabel } from "../lib/labels";
+import { RATING_SCALE, SCORER_VERSION, saveLabel, toVerdict } from "../lib/labels";
 import { type ScoredPost, summarize, verdictLabel } from "../lib/scoring/scorer";
 
 /** Marks the host element, so a re-injection can find and reuse it. */
@@ -218,6 +218,14 @@ const STYLES = `
   }
   .fix:hover { background: var(--surface-alt); }
   .fix:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+  /* Five points need to read as a scale at a glance, so the ends carry the
+     verdict colours and the middle stays neutral. Colour is not the only cue:
+     the digit, the title and the aria-label all carry the meaning too. */
+  .fix.r1 { border-color: var(--green); }
+  .fix.r2 { border-color: color-mix(in srgb, var(--green) 55%, var(--border)); }
+  .fix.r4 { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); }
+  .fix.r5 { border-color: var(--red); }
+  .fix[aria-pressed="true"] { background: var(--text); color: var(--surface); }
   .fix[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: var(--text); }
   .thanks { color: var(--muted); font-size: 11px; width: 100%; }
 
@@ -416,14 +424,18 @@ class Panel {
 
   private buildCorrectionRow(post: ExtractedPost, scored: ScoredPost): HTMLElement {
     const row = el("div", "correct");
-    row.append(el("span", undefined, "Wrong? Mark the right one:"));
+    row.append(el("span", undefined, "How good was this post, really?"));
 
     const buttons: HTMLButtonElement[] = [];
-    for (const verdict of VERDICT_ORDER) {
-      const button = el("button", "fix", verdictLabel(verdict));
+    for (const point of RATING_SCALE) {
+      // The number leads and the word follows, because the scale is what is
+      // being recorded — the words are there so 2 and 4 mean the same thing in
+      // month two as in week one, which is the whole risk of a finer scale.
+      const button = el("button", `fix r${point.rating}`, `${point.rating}`);
       button.type = "button";
       button.setAttribute("aria-pressed", "false");
-      button.setAttribute("aria-label", `Mark this post as ${verdictLabel(verdict)}`);
+      button.title = `${point.label} — ${point.hint}`;
+      button.setAttribute("aria-label", `Rate ${point.rating} of 5: ${point.label}. ${point.hint}`);
 
       button.addEventListener("click", () => {
         for (const other of buttons) other.setAttribute("aria-pressed", "false");
@@ -432,7 +444,8 @@ class Panel {
         void saveLabel({
           postId: post.id,
           text: post.text,
-          label: verdict,
+          rating: point.rating,
+          label: toVerdict(point.rating),
           predicted: scored.verdict,
           score: scored.score,
           at: new Date().toISOString(),
@@ -444,7 +457,7 @@ class Panel {
           note = el("span", "thanks");
           row.append(note);
         }
-        note.textContent = "Saved locally ✓";
+        note.textContent = `Saved: ${point.rating} · ${point.label} ✓`;
       });
 
       buttons.push(button);

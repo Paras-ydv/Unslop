@@ -8,6 +8,7 @@
 import {
   allLabels,
   clearLabels,
+  RATING_SCALE,
   summarizeLabels,
   toJsonl,
   type Label,
@@ -63,6 +64,24 @@ function render(labels: Label[]): void {
   for (const verdict of ["green", "yellow", "red"] as const) {
     container.append(statRow(`  ${verdict}`, String(stats.byLabel[verdict])));
   }
+
+  // The 1–5 spread, which answers a question the three-way split cannot: is the
+  // fine scale actually being used? Everything piling onto 1, 3 and 5 means the
+  // middle points are not being distinguished in practice, and the granularity
+  // is costing effort without buying resolution — worth knowing early, while
+  // switching back is still cheap.
+  const spread = el("div", "spread");
+  for (const point of RATING_SCALE) {
+    const count = stats.byRating[point.rating];
+    const cell = el("div", "point");
+    const bar = el("i");
+    const tallest = Math.max(...RATING_SCALE.map((p) => stats.byRating[p.rating]), 1);
+    bar.style.height = `${Math.round((count / tallest) * 100)}%`;
+    bar.title = `${point.rating} — ${point.label}: ${count}`;
+    cell.append(el("span", "n", String(count)), bar, el("span", "k", String(point.rating)));
+    spread.append(cell);
+  }
+  container.append(el("div", "spread-label", "Ratings 1–5"), spread);
 
   if (stats.agreement !== null) {
     container.append(

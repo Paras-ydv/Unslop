@@ -189,6 +189,30 @@ Simple. Not easy.
 
 Which one will you start today? Comment below. ⚡`,
   },
+  {
+    id: "red-corporate-filler",
+    label: "red",
+    note: "Business-speak with no content — the only fixture exercising corporateFiller",
+    text: `At the end of the day, it's about moving the needle.
+
+Too many teams boil the ocean instead of picking the low hanging fruit. We need to think outside the box, leverage our core strengths, and take it to the next level.
+
+Moving forward, let's circle back on this and hit the ground running.
+
+Who else has seen this? 👇`,
+  },
+  {
+    id: "red-prescriptive-advice",
+    label: "red",
+    note: "Second-person imperatives with nothing concrete — the only fixture exercising prescriptiveness",
+    text: `Stop waiting for permission.
+
+You need to stop chasing titles and start building skill. Here's how to actually get ahead:
+
+Stop saying yes to everything. Start saying no. You need to protect your time like it's the only thing you own.
+
+Most people never learn this. Don't be most people.`,
+  },
 
   // ─── YELLOW: real content, slop packaging ───
   {

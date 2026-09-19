@@ -10,7 +10,14 @@
 import { describe, expect, it } from "vitest";
 import type { ExtractedPost } from "@shared/types";
 import { FIXTURES, fixturesByLabel, type Fixture } from "./fixtures";
-import { extractFeatures, toSignals, toVector, FEATURE_KEYS } from "./vector";
+import {
+  extractFeatures,
+  informativeness,
+  SIGNAL_FLOOR,
+  toSignals,
+  toVector,
+  FEATURE_KEYS,
+} from "./vector";
 import { mean } from "./text-utils";
 
 /** Wrap a fixture as an ExtractedPost so the real entry point is exercised. */
@@ -165,11 +172,49 @@ describe("signals", () => {
     expect(signals.some((s) => s.weight < 0)).toBe(true);
   });
 
-  it("orders signals by magnitude and respects the limit", () => {
+  it("orders signals by informativeness and respects the limit", () => {
     const signals = toSignals(features.get("red-classic-hook-list")!, 3);
     expect(signals.length).toBeLessThanOrEqual(3);
-    const magnitudes = signals.map((s) => Math.abs(s.weight));
-    expect([...magnitudes].sort((a, b) => b - a)).toEqual(magnitudes);
+    // Raw magnitude no longer decides the order: a feature that fires on most
+    // posts is a weaker explanation than a rarer one of similar size.
+    const ranks = signals.map((s) => Math.abs(s.weight) * informativeness(s.key));
+    expect([...ranks].sort((a, b) => b - a)).toEqual(ranks);
+  });
+
+  it("omits features too weak to be worth naming", () => {
+    for (const fixture of FIXTURES) {
+      for (const signal of toSignals(features.get(fixture.id)!)) {
+        expect(Math.abs(signal.weight), fixture.id).toBeGreaterThanOrEqual(SIGNAL_FLOOR);
+      }
+    }
+  });
+});
+
+describe("corpus coverage", () => {
+  /**
+   * Every weighted feature must fire on at least one fixture.
+   *
+   * Four of them fired on none — `shoutingRatio`, `corporateFiller`,
+   * `prescriptiveness` and (below the floor) `citationDensity` — which meant
+   * they carried weight in the scorer on no evidence at all, and nothing here
+   * would have noticed them breaking. `shoutingRatio` was in fact broken: it
+   * required a whole capitalised line, so the corpus's own shouting fixture
+   * scored 0.17 and the detector written for that fixture did not fire on it.
+   *
+   * A feature nothing exercises is a guess wearing a coefficient. Adding a
+   * feature now means adding a fixture that triggers it.
+   */
+  it("exercises every weighted feature at least once", () => {
+    const unexercised = FEATURE_KEYS.filter((descriptor) => {
+      if (descriptor.direction === "neutral") return false;
+      return !FIXTURES.some((fixture) => {
+        const group: Record<string, unknown> = { ...features.get(fixture.id)![descriptor.group] };
+        const value = group[descriptor.key];
+        return typeof value === "number" && value >= SIGNAL_FLOOR;
+      });
+    }).map((descriptor) => descriptor.key);
+
+    expect(unexercised, `no fixture fires: ${unexercised.join(", ")}`).toEqual([]);
   });
 });
 

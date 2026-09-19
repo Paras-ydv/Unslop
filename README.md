@@ -29,7 +29,7 @@ the weak link and has been rebuilt around the two failures that actually caused
 it — see [Open issues](#open-issues). It now has test coverage, which it did not
 before, but a long real session is still what proves it.
 
-**Accuracy on the built-in corpus: 25/29 exact (86%), zero inversions** — no
+**Accuracy on the built-in corpus: 27/31 exact (87%), zero inversions** — no
 green post is ever called red, or the reverse. That corpus is synthetic, so
 treat the number as evidence the detectors fire as designed, not as a real-world
 accuracy estimate.
@@ -412,13 +412,16 @@ The target is 300–500 labels. Three things matter while collecting:
   to it. Worth sourcing posts from outside the personal feed before trusting any
   accuracy number from phase 5.
 
-Worth settling *before* collection starts, not after: labels are recorded on the
-same three-way scale the scorer emits, and problem #6 in plan.md argues for
-labeling finer and collapsing afterwards. Granularity cannot be recovered later.
+**Settled before collection, not after:** labels record a 1–5 quality rating and
+collapse to the three buckets with `toVerdict`. Granularity cannot be recovered
+later, so the coarse form would have frozen both the class boundaries and the
+thresholds into the dataset — see problem #18 in plan.md. Watch the 1–5 spread
+in the popup while collecting: counts piling onto 1, 3 and 5 mean the middle
+points are not being used, and the extra granularity is not earning its cost.
 
 ### 6. The fixture corpus is synthetic
 
-The 29 fixtures were written to span the pattern space, not sampled from a real
+The 31 fixtures were written to span the pattern space, not sampled from a real
 feed. The 86% figure means the detectors fire as designed — it is not a
 real-world accuracy estimate, and should not be quoted as one.
 

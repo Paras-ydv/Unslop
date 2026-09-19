@@ -5,10 +5,13 @@ import {
   clearLabels,
   removeLabel,
   saveLabel,
+  RATING_SCALE,
   summarizeLabels,
   toJsonl,
+  toVerdict,
   SCORER_VERSION,
   type Label,
+  type Rating,
 } from "./labels";
 
 /** Minimal chrome.storage.local stand-in; the test environment is node. */
@@ -26,11 +29,20 @@ function installStorage(): Record<string, unknown> {
   return store;
 }
 
-function label(postId: string, want: Verdict, got: Verdict): Label {
+/**
+ * Build a label from the verdict it should collapse to.
+ *
+ * Picks the midpoint of each verdict's rating range, so the row is internally
+ * consistent — `label` always equals `toVerdict(rating)`, as the panel writes
+ * it. Tests that care about a specific point pass `rating` directly.
+ */
+function label(postId: string, want: Verdict, got: Verdict, rating?: Rating): Label {
+  const chosen: Rating = rating ?? (want === "green" ? 1 : want === "red" ? 5 : 3);
   return {
     postId,
     text: `text for ${postId}`,
-    label: want,
+    rating: chosen,
+    label: toVerdict(chosen),
     predicted: got,
     score: 0.5,
     at: "2026-09-16T00:00:00.000Z",
@@ -121,6 +133,43 @@ describe("summarizeLabels", () => {
     ]);
     expect(stats.disagreements).toBe(1);
     expect(stats.agreement).toBe(0.5);
+  });
+
+  it("reports the 1–5 spread alongside the three-way split", () => {
+    const stats = summarizeLabels([
+      label("a", "green", "green", 1),
+      label("b", "green", "green", 2),
+      label("c", "yellow", "yellow", 3),
+      label("d", "red", "red", 4),
+      label("e", "red", "red", 5),
+    ]);
+    expect(stats.byRating).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 });
+    expect(stats.byLabel).toEqual({ green: 2, yellow: 1, red: 2 });
+  });
+
+  it("derives the class from the rating, not the stored verdict", () => {
+    // A row written under different cut points must count under the current
+    // ones — that is the whole reason the rating is the stored truth.
+    const stale: Label = { ...label("a", "green", "green", 5), label: "green" };
+    expect(summarizeLabels([stale]).byLabel).toEqual({ green: 0, yellow: 0, red: 1 });
+  });
+});
+
+describe("toVerdict", () => {
+  it("collapses the scale at the documented boundaries", () => {
+    expect(toVerdict(1)).toBe("green");
+    expect(toVerdict(2)).toBe("green");
+    expect(toVerdict(3)).toBe("yellow");
+    expect(toVerdict(4)).toBe("red");
+    expect(toVerdict(5)).toBe("red");
+  });
+
+  it("covers all five points with a label and a hint", () => {
+    expect(RATING_SCALE.map((p) => p.rating)).toEqual([1, 2, 3, 4, 5]);
+    for (const point of RATING_SCALE) {
+      expect(point.label, `rating ${point.rating}`).toBeTruthy();
+      expect(point.hint, `rating ${point.rating}`).toBeTruthy();
+    }
   });
 });
 

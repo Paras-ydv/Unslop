@@ -11,13 +11,75 @@
 
 import type { Verdict } from "@shared/types";
 
+/**
+ * A human quality judgment, 1 (great read) to 5 (worthless).
+ *
+ * Finer than the three verdicts the scorer emits, and deliberately so —
+ * **collapsing is one-way**. A 1–5 rating always yields a three-way label
+ * (`toVerdict`), and a three-way label never yields a rating back. Recording
+ * the coarse form would have frozen both the class boundaries and the
+ * threshold values into the dataset at collection time, and the only way to
+ * change either afterwards is to label every post again.
+ *
+ * It buys two specific things for phase 5:
+ *
+ * - **A usable middle.** On a three-way scale "useful but generic" and
+ *   "nearly red, being charitable" are the same label, so the boundary the
+ *   model most needs to learn is exactly where the data is noisiest. 2 and 4
+ *   separate them.
+ * - **Movable thresholds.** Buckets can be re-derived at different cut points,
+ *   and a regressor can be fit against the rating directly, without
+ *   re-labeling.
+ *
+ * The cost is on the labeler, not the code: telling a 2 from a 3 consistently
+ * across months is harder than picking one of three buttons, and inconsistent
+ * fine labels are worse than consistent coarse ones. If that turns out to be
+ * the binding constraint, collapse with `toVerdict` and nothing is lost —
+ * which is the asymmetry that decided this.
+ */
+export type Rating = 1 | 2 | 3 | 4 | 5;
+
+/** The five points, in order, with the wording the panel shows. */
+export const RATING_SCALE: readonly { rating: Rating; label: string; hint: string }[] = [
+  { rating: 1, label: "Great", hint: "Learned something I could not have written myself" },
+  { rating: 2, label: "Good", hint: "Worth reading, carries something concrete" },
+  { rating: 3, label: "Fine", hint: "Neither useful nor objectionable" },
+  { rating: 4, label: "Weak", hint: "Mostly filler, thin on substance" },
+  { rating: 5, label: "Slop", hint: "No value — bait, platitudes, or pure template" },
+];
+
+/**
+ * Collapse a rating to the three-way verdict the scorer speaks.
+ *
+ * The cut points live here alone, so moving them is a one-line change that
+ * re-derives every historical label rather than invalidating it. 3 maps to
+ * yellow because the middle of the scale *is* the ambiguous class.
+ */
+export function toVerdict(rating: Rating): Verdict {
+  if (rating <= 2) return "green";
+  if (rating >= 4) return "red";
+  return "yellow";
+}
+
 /** One human judgment about one post. */
 export interface Label {
   /** Post URN, or a content hash for posts without one. */
   postId: string;
   /** Full post text, so the export can train without re-scraping. */
   text: string;
-  /** What the user says it should be. */
+  /**
+   * The judgment, on the 1–5 scale. This is the ground truth; everything
+   * coarser is derived from it.
+   */
+  rating: Rating;
+  /**
+   * `rating` collapsed to three classes, denormalized into the export.
+   *
+   * Redundant with `toVerdict(rating)` on purpose: the JSONL is meant to be
+   * self-contained for a training script that should not have to reimplement
+   * the cut points, and keeping it here means a later change to those points
+   * is visible as a mismatch rather than silently altering old rows.
+   */
   label: Verdict;
   /** What the scorer said, for measuring where it disagrees. */
   predicted: Verdict;
@@ -35,8 +97,13 @@ export interface Label {
  * Labels are judgments about *posts*, so they stay valid across versions — but
  * the `predicted` field is only comparable within one version, and phase 5 needs
  * to know which rows came from which scorer.
+ *
+ * `rules-2`: `lexicalDiversity` removed and `BIAS` re-fitted (problems #14–#17),
+ * and the label scale moved from three verdicts to 1–5. Any `rules-1` row
+ * carries no `rating` and cannot be collapsed forward, so phase 5 should read
+ * the version before trusting a row's shape.
  */
-export const SCORER_VERSION = "rules-1";
+export const SCORER_VERSION = "rules-2";
 
 const STORAGE_KEY = "unslop:labels";
 
@@ -110,24 +177,41 @@ export function toJsonl(labels: Label[]): string {
 export interface LabelStats {
   total: number;
   byLabel: Record<Verdict, number>;
+  /** Counts per point of the 1–5 scale, indexed by rating. */
+  byRating: Record<Rating, number>;
   disagreements: number;
   /** Share of labeled posts the scorer got right. Null when nothing is labeled. */
   agreement: number | null;
 }
 
-/** Summarize the label set, for the popup's progress display. */
+/**
+ * Summarize the label set, for the popup's progress display.
+ *
+ * Both breakdowns are reported because they answer different questions while
+ * collecting: `byLabel` is the class balance phase 5 trains against, and
+ * `byRating` shows whether the fine scale is actually being used — all the
+ * weight landing on 1, 3 and 5 means the middle points are not being
+ * distinguished in practice, and the extra granularity is costing effort
+ * without buying resolution.
+ */
 export function summarizeLabels(labels: Label[]): LabelStats {
   const byLabel: Record<Verdict, number> = { green: 0, yellow: 0, red: 0 };
+  const byRating: Record<Rating, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   let disagreements = 0;
 
   for (const row of labels) {
-    byLabel[row.label] += 1;
-    if (row.label !== row.predicted) disagreements += 1;
+    // Derived rather than read, so a row written before the cut points last
+    // moved still counts under the current ones.
+    const verdict = toVerdict(row.rating);
+    byLabel[verdict] += 1;
+    byRating[row.rating] += 1;
+    if (verdict !== row.predicted) disagreements += 1;
   }
 
   return {
     total: labels.length,
     byLabel,
+    byRating,
     disagreements,
     agreement:
       labels.length === 0 ? null : (labels.length - disagreements) / labels.length,

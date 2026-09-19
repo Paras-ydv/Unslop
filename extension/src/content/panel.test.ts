@@ -220,3 +220,54 @@ describe("listing", () => {
     expect(document.querySelector(HOST)!.shadowRoot!.querySelector(".empty")).not.toBeNull();
   });
 });
+
+describe("the correction control records a rating", () => {
+  /** Open a row's detail so the correction buttons are rendered. */
+  async function openRow() {
+    const store: Record<string, unknown> = {};
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: {
+          get: async (key: string) => ({ [key]: store[key] }),
+          set: async (items: Record<string, unknown>) => void Object.assign(store, items),
+          remove: async (key: string) => void delete store[key],
+        },
+      },
+    });
+
+    const { showPost } = await loadPanel();
+    showPost(document.body, post("a"), scored("green"));
+
+    const root = document.querySelector(HOST)!.shadowRoot!;
+    root.querySelector<HTMLButtonElement>(".head")!.click();
+    return { root, store };
+  }
+
+  it("offers all five points of the scale, not three verdicts", async () => {
+    const { root } = await openRow();
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".fix")];
+
+    expect(buttons.map((b) => b.textContent)).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("names each point for the labeler, so 2 means the same thing next month", async () => {
+    const { root } = await openRow();
+    for (const button of root.querySelectorAll<HTMLButtonElement>(".fix")) {
+      expect(button.title).toMatch(/\S+ — \S/);
+      expect(button.getAttribute("aria-label")).toMatch(/^Rate [1-5] of 5:/);
+    }
+  });
+
+  it("stores the rating and the verdict it collapses to", async () => {
+    const { root, store } = await openRow();
+    root.querySelectorAll<HTMLButtonElement>(".fix")[3]!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const rows = store["unslop:labels"] as { rating: number; label: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.rating).toBe(4);
+    // 4 collapses to red; storing both is what lets the cut points move later.
+    expect(rows[0]!.label).toBe("red");
+  });
+});

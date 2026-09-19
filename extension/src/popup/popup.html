@@ -23,6 +23,16 @@
       .bars .yellow { background: #bf8700; }
       .bars .red { background: #c4351b; }
 
+      .spread-label { margin: 10px 0 4px; opacity: 0.65; font-size: 10.5px;
+                      text-transform: uppercase; letter-spacing: 0.05em; }
+      .spread { display: flex; align-items: flex-end; gap: 4px; height: 52px; }
+      .spread .point { flex: 1; display: flex; flex-direction: column;
+                       align-items: center; justify-content: flex-end; height: 100%; }
+      .spread .n { font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+      .spread i { display: block; width: 100%; min-height: 2px;
+                  background: #0a66c2; border-radius: 2px 2px 0 0; }
+      .spread .k { font-size: 10px; opacity: 0.55; margin-top: 2px; }
+
       .progress { margin: 10px 0; }
       .track { height: 6px; border-radius: 3px; background: rgba(128,128,128,0.2); overflow: hidden; }
       .track i { display: block; height: 100%; background: #0a66c2; }

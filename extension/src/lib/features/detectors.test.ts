@@ -78,6 +78,35 @@ describe("structural", () => {
     expect(f.shoutingRatio).toBe(0);
   });
 
+  it("detects a shouted word inside an ordinary line", () => {
+    // The whole-line rule alone missed this, which is how shouting actually
+    // appears — one word for emphasis, not an entire capitalised line.
+    const f = structural("AI will change EVERYTHING about how we work.");
+    expect(f.shoutingRatio).toBe(1);
+  });
+
+  it("detects short emphasis words that are never acronyms", () => {
+    expect(structural("And most people are NOT ready.").shoutingRatio).toBe(1);
+    expect(structural("You must NEVER do this to a database.").shoutingRatio).toBe(1);
+  });
+
+  it("does not read a technical post as shouting", () => {
+    // The expensive false positive: acronym-dense writing is exactly the
+    // substantive content the informational weights exist to defend.
+    const f = structural(
+      "We migrated the API from REST to gRPC and cut p99 from 840ms to 120ms.\n" +
+        "The SQL plan showed a missing index; our CTO signed off. CI/CD runs on AWS ECS with JSON over HTTP.",
+    );
+    expect(f.shoutingRatio).toBe(0);
+  });
+
+  it("counts a shout that closes with a pointer emoji", () => {
+    // `[!?]{2,}$` anchored at the raw end, so every line closing with the
+    // pointer emoji slop reliably appends went uncounted.
+    const f = structural("Tag someone who needs to see this!! \u{1F447}");
+    expect(f.shoutingRatio).toBe(1);
+  });
+
   it("scores uniform line lengths as templated", () => {
     const f = structural("Ship fast today\nLearn faster now\nRepeat it again\nKeep on going");
     expect(f.lineUniformity).toBeGreaterThan(0.6);
@@ -202,9 +231,6 @@ describe("informational", () => {
     expect(f.prescriptiveness).toBeGreaterThan(0.3);
   });
 
-  it("neutralizes lexical diversity for very short posts", () => {
-    expect(informational("Postgres 17 ships incremental backups.").lexicalDiversity).toBe(0.5);
-  });
 });
 
 describe("engagement-bait", () => {

@@ -31,8 +31,6 @@ export interface InformationalFeatures {
   firstPersonRatio: number;
   /** Second-person-imperative advice framing. 0–1. Higher is worse. */
   prescriptiveness: number;
-  /** Lexical diversity — unique words over total. 0–1. Higher is better. */
-  lexicalDiversity: number;
 }
 
 /** Numbers per 100 words at which density saturates. */
@@ -155,8 +153,6 @@ export function extractInformational(
   }
   const pronouns = firstPerson + secondPerson;
 
-  const uniqueWords = new Set(words).size;
-
   return {
     numberDensity: saturate(ratio(countNumbers(text) * 100, wordCount), NUMBER_SCALE),
     entityDensity: saturate(ratio(countEntities(text) * 100, wordCount), ENTITY_SCALE),
@@ -164,8 +160,5 @@ export function extractInformational(
     vagueness: saturate(vague.count, VAGUE_SCALE),
     firstPersonRatio: ratio(firstPerson, Math.max(pronouns, 1)),
     prescriptiveness: saturate(ratio(countPrescriptive(text) * 100, wordCount), 2),
-    // Very short posts trivially score high diversity, so the raw ratio is only
-    // meaningful past a few dozen words.
-    lexicalDiversity: words.length >= 20 ? ratio(uniqueWords, wordCount) : 0.5,
   };
 }

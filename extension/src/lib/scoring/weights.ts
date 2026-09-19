@@ -44,7 +44,6 @@ export const WEIGHTS: Record<string, number> = {
   vagueness: 0.45,
   firstPersonRatio: 0.0, // descriptor only; neither good nor bad
   prescriptiveness: 0.40,
-  lexicalDiversity: -0.40,
 
   // ─── Engagement bait: the clearest slop signal, and independent of
   // authorship. Weighted highest of any individual feature.

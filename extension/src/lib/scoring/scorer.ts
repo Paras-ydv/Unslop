@@ -10,6 +10,7 @@ import type { Classification, ExtractedPost, Signal, Verdict } from "@shared/typ
 import {
   extractFeatures,
   FEATURE_KEYS,
+  informativeness,
   type FeatureSet,
 } from "../features/vector";
 import {
@@ -43,9 +44,24 @@ export interface ScoredPost extends Classification {
  * A positive bias means absence of evidence reads as mildly good rather than
  * mildly suspicious, which is the correct prior: most posts are not bait, and
  * the cost of a false red is much higher than a false green.
+ *
+ * Raised from 0.75 when `lexicalDiversity` was removed (problem #16). That
+ * feature scored 0.79 on average with a −0.40 weight, so it was subtracting
+ * ~0.32 from every post's sum regardless of content — a bias term wearing a
+ * feature's name. Deleting it without moving `BIAS` shifted the whole
+ * distribution up and cost 10 points of corpus accuracy, which is the
+ * measurement that proves what it had been doing: a real feature's removal
+ * would have hurt one class, not translated all three.
+ *
+ * 1.05 rather than the arithmetic 1.07, because a sweep recovered the full
+ * 27/31 there. Read that honestly: across 0.95–1.25 the corpus scores 25–27
+ * with no clean peak, so this is one fixture's worth of noise on 31 synthetic
+ * posts, not a tuned optimum. It is the least-surprising value in a flat
+ * region, and phase 5 should fit the model's equivalent from real labels
+ * rather than inherit this number.
  */
 const STEEPNESS = 1.6;
-const BIAS = 0.75;
+const BIAS = 1.05;
 
 function logistic(sum: number): number {
   return 1 / (1 + Math.exp(-STEEPNESS * (sum - BIAS)));
@@ -139,14 +155,23 @@ export function scorePost(
 
   // Signals are ordered so the ones *explaining the verdict* come first: a red
   // post leads with what made it red, even if some quality signal happens to
-  // have a larger magnitude. Within each side, strongest first.
+  // have a larger magnitude.
+  //
+  // Within a side, ordering by contribution alone surfaces whichever feature is
+  // largest, and the largest are reliably the cheap structural ratios that fire
+  // on most posts — so the panel led with "uniform sentences" while the
+  // engagement ask that actually decided the verdict sat below the fold.
+  // Scaling by `informativeness` puts the discriminating signal first. It
+  // reorders the explanation only; `sum` above is untouched.
   const leading = verdict === "green" ? -1 : 1;
+  const rank = (s: Signal): number =>
+    Math.abs(s.weight) * informativeness(s.key);
   const signals = contributions
     .sort((a, b) => {
       const aLeads = Math.sign(a.weight) === leading;
       const bLeads = Math.sign(b.weight) === leading;
       if (aLeads !== bLeads) return aLeads ? -1 : 1;
-      return Math.abs(b.weight) - Math.abs(a.weight);
+      return rank(b) - rank(a);
     })
     .slice(0, 6);
 

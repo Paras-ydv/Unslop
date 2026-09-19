@@ -16,8 +16,8 @@ data-collection target that only dogfooding can reach.
 | --- | --- | --- |
 | 0 — Scaffold | Done | TypeScript + Vite, MV3, two build passes |
 | 1 — Observer & extractor | Reworked | Retry-on-hydrate, recycle-safe state, author-link-bounded discovery; tested, needs a live session |
-| 2 — Feature engine | Done | 28 features across 4 groups, 29-post corpus |
-| 3 — Rule engine & panel | Done | 25/29 exact (86%), zero inversions |
+| 2 — Feature engine | Done | 27 features across 4 groups, 31-post corpus |
+| 3 — Rule engine & panel | Done | 27/31 exact (87%), zero inversions |
 | 4 — Labeled dataset | Mechanism done | Correction UI + JSONL export; **0 labels collected so far** |
 | 5 — Local ML model | Not started | Blocked on phase 4 data |
 | 6 — Backend | Not started | Optional |
@@ -150,6 +150,38 @@ carrying real data should score green.
 Consequence: labels are about **value**, not **provenance**, and the feature set
 should weight informational density most heavily.
 
+### 2b. What "slop" means, per the literature
+
+Added after checking the design against [Wikipedia's AI slop
+article](https://en.wikipedia.org/wiki/AI_slop) and the Kommers et al. study it
+cites, which gives three prototypical properties:
+
+| Property | Meaning | Covered here |
+| --- | --- | --- |
+| Superficial competence | reads as competent, carries no depth | Yes — the informational group, weighted heaviest |
+| Asymmetric effort | little human investment per unit of output | Partly — the structural/template features proxy it |
+| Mass producibility | cheap to generate at volume | **No — not measured at all** |
+
+Two things worth taking from it.
+
+The definition is **"lacking in effort, quality, or meaning… produced in high
+volume"**, pejorative "similar to spam" — about the content, not its
+provenance. That is problem #2 above, arrived at independently, and it is why
+`numberDensity` and `entityDensity` carry the heaviest counter-weights.
+
+The gap is mass producibility, and it is real. A single post cannot reveal that
+it is one of a thousand near-identical outputs; only comparison across a feed
+can. That is cross-post state, not per-post scoring, so it belongs with the
+embedding-similarity work already sketched in phase 6 rather than in the feature
+engine.
+
+What the article does **not** give is new detectors for this product. Its
+concrete tells are visual (six fingers, malformed logos) or provenance-based
+(fake author bios, absent performance history); the textual ones — fabricated
+citations, prompts left in the output — are real but rare on LinkedIn and mostly
+need external verification. It is corroboration for the design, not a source of
+features.
+
 ### 3. LinkedIn DOM fragility
 
 Class names are obfuscated and rotate. Selectors must be layered — prefer stable
@@ -178,6 +210,8 @@ before trusting Phase 5 accuracy numbers.
 
 Unlike spam, slop has no objective label. Inter-rater agreement will be poor.
 Consider labeling on a finer scale and collapsing to three buckets afterwards.
+
+**Settled — see problem #18.** Labels record 1–5 and collapse with `toVerdict`.
 
 ---
 
@@ -275,7 +309,7 @@ jsdom coverage; that it did not is the actual root cause of how long this took.
 
 ### 12. The fixture corpus is synthetic
 
-The 29 fixtures were written to span the pattern space, not sampled from a real
+The 31 fixtures were written to span the pattern space, not sampled from a real
 feed. They are adequate for regression testing and useless as an accuracy
 estimate — 86% on this corpus says the detectors fire as designed, not that the
 extension is 86% accurate in the wild. Only phase 4 dogfood data can say that.
@@ -295,3 +329,238 @@ a post when its row is opened.
 
 The rule this generalises to: **do not store your state in someone else's
 DOM.**
+
+### 14. The explanation surfaced the least informative signals (found by dogfooding)
+
+The panel's "WHAT THIS IS BASED ON" list read like a horoscope — "ALL CAPS or
+multiple !!", "Three-beat punchy fragments", "Unusually uniform sentences",
+"Varied vocabulary" — four observations true of almost any post, on a verdict
+that was itself defensible. The score was not the problem; the *explanation*
+was, and from outside they are indistinguishable.
+
+Both `toSignals` and the scorer ranked by magnitude alone. The features with the
+largest values are reliably the cheap structural ratios, because they are
+continuous and fire on ordinary formatting, while the features carrying the
+design intent — `ctaPhrases` at 0.95, `numberDensity` at −0.90 — fire rarely and
+specifically. So the panel systematically led with the generic and buried the
+discriminating, exactly inverting `weights.ts`'s stated rule that form alone
+must never be decisive. That rule was honoured in the score and nowhere else.
+
+Measured across the corpus, the fire rate above the old 0.3 floor:
+
+| Feature | Fires on |
+| --- | --- |
+| `lexicalDiversity` | **100%** |
+| `oneSentencePerLineRatio`, `hookPattern` | 90% |
+| `sentenceUniformity` | 72% |
+| `ctaPhrases` | 34% |
+| `shoutingRatio`, `corporateFiller`, `citationDensity`, `prescriptiveness` | **0%** |
+
+`lexicalDiversity` fires on every fixture, which makes it worthless as an
+explanation whatever its weight: a reason given for every post distinguishes
+none of them. Ranking is now `|contribution| × informativeness(key)`, an
+inverse-frequency multiplier from those rates, and the display floor rose from
+0.3 to 0.42.
+
+Three things this deliberately does not do:
+
+- **It does not touch the score.** Verdicts were byte-identical across the
+  change — 25/29, zero inversions, measured before problem #15 grew the
+  corpus. Down-ranking a common feature in the *score* would double-count what
+  the weights already encode.
+- **It does not censor.** The multiplier is clamped to [0.35, 1.4], so a common
+  signal that is genuinely the reason still appears, lower down.
+- **It does not read a 0% rate as "rare".** `shoutingRatio` fires on no fixture
+  and fires on live posts, so a zero rate means *unmeasured*, not informative,
+  and clamps to the same multiplier as a rare-but-seen feature rather than
+  scoring as maximally distinguishing on no evidence.
+
+Two lessons.
+
+**A rate of 0% and a rate of 100% are both "this feature explains nothing", for
+opposite reasons.** One never fires and the other always does. Four of the 28
+features have never fired on the corpus at all, which means they are unweighted
+guesses no test exercises — and `shoutingRatio` appearing on a live post proves
+the corpus, not the feature, is what is missing.
+
+**The base rates are measured against 29 synthetic fixtures, so they inherit
+problem #12 entirely.** They say how often a feature fires on fixtures written
+to span the pattern space, which is not how often it fires on a real feed.
+Regenerate them from real labels once phase 4 has data; until then they are the
+best available estimate and explicitly not ground truth.
+
+### 15. Four features had never fired on anything (found while fixing #14)
+
+Measuring fire rates for #14 turned up four features that fired on *no* fixture:
+`shoutingRatio`, `corporateFiller`, `prescriptiveness`, and `citationDensity`
+below the display floor. Each carried a weight in the scorer, so each was
+contributing to verdicts with nothing exercising it and no test that would
+notice it breaking.
+
+Probing them individually separated two different causes, which is why the
+fix is not one change:
+
+- **`corporateFiller` and `prescriptiveness` work.** Given business-speak or
+  second-person imperatives they saturate immediately. Nothing in a corpus
+  written to span *formatting* patterns happened to contain either. Fixed by
+  adding `red-corporate-filler` and `red-prescriptive-advice`.
+- **`shoutingRatio` was broken.** It required every letter on a line to be
+  capitalised, and real typographic shouting is one word inside an ordinary
+  sentence — "AI will change EVERYTHING about how we work." The corpus's own
+  `red-shouting` fixture scored **0.17**: a detector did not fire on the
+  fixture written to exercise it, and the suite passed anyway. Two further
+  misses came out of the same trace: "NOT" is three letters, and `[!?]{2,}$`
+  could not match a line closing with the pointer emoji that slop reliably
+  appends.
+
+The shouting rule now also matches a capitalised run inside a line, at five
+letters or more plus a small allowlist of emphasis words that are never
+acronyms (`NOT`, `NEVER`, `MUST`, …). The length floor is the whole difficulty:
+an acronym is also a capitalised run, and **a false positive here lands on
+exactly the acronym-dense technical posts the informational weights exist to
+defend**. Five clears API, SQL, CEO, HTTP and JSON at the cost of missing a
+shouted five-letter word, which is the cheaper error. The allowlist is English
+and does not generalise; a non-English feed gets the length rule only.
+
+`red-shouting` now scores 0.67, and an acronym-heavy technical paragraph still
+scores 0. Corpus: 31 fixtures, 27 exact (87%), zero inversions.
+
+`corpus.test.ts` now asserts that **every weighted feature fires on at least one
+fixture**. A feature nothing exercises is a guess wearing a coefficient, and the
+rule this generalises to is the one that keeps recurring in this file: a number
+nothing tests is not evidence, whatever its precision.
+
+Worth stating plainly, because #14 and #15 came from the same measurement: **a
+0% fire rate and a 100% fire rate are the same finding.** Neither feature can
+explain anything — one never fires, the other never distinguishes — and both
+looked fine until the rates were counted. Nothing here was caught by the 250
+tests that were already passing.
+
+### 16. A feature that fires on everything is a bias term in disguise
+
+`lexicalDiversity` — unique words over total — fired above the display floor on
+**100% of fixtures**, the finding that came out of #14's rate table. Measured
+per class, it explains why:
+
+| Class | Mean |
+| --- | --- |
+| red | 0.795 |
+| yellow | 0.787 |
+| green | 0.784 |
+
+Three numbers inside 0.011 of each other, on the feature's *own* axis, and
+ordered slightly backwards from its `quality` direction. It separated nothing.
+At a −0.40 weight it subtracted ~0.32 from every post's sum regardless of
+content, which is the definition of a bias term, not a signal.
+
+Deleting it alone dropped the corpus from 87% to **77%** — and that drop is the
+proof rather than a setback. Every class shifted upward together: three yellows
+crossed into red, three greens into yellow, no class hurt differentially. **A
+feature carrying real information does not translate the whole distribution
+when removed; a constant does.** `BIAS` absorbed it, 0.75 → 1.05, and the
+corpus returned to 27/31 with the same four misses as before.
+
+Two things to carry.
+
+**The bias must be set deliberately, which problem #8 already said.** It was
+right that absence of evidence should read as mildly good; what it missed is
+that a second, accidental bias had grown inside the feature set where nothing
+would look for it. Phase 5 inherits this trap directly — a model fed a constant
+feature will happily learn a coefficient for it and bury the same offset in a
+place that is harder to inspect than a named constant.
+
+**The sweep is not a tuning result.** Across bias 0.95–1.25 the corpus scores
+25–27 with no clean peak; 1.05 is the least-surprising value in a flat region,
+worth one fixture on 31 synthetic posts. Quoting it as tuned would be the
+83%-on-a-synthetic-corpus mistake from problem #12 in a new place.
+
+The vector is now 27 features. Removing an entry from `FEATURE_KEYS` breaks the
+index contract in its header — which was free here only because no model exists
+yet. After phase 5 trains, this same change costs a retrain.
+
+### 17. The uniformity pair is correlated and both are load-bearing (not changed)
+
+`lineUniformity` and `sentenceUniformity` correlate at **r = 0.64**, and both
+carry 0.30, so uniformity contributes 0.60 in combination. That looked like
+double-counting and was queued as a fix. Measuring it first says otherwise, so
+nothing was changed — recorded here because the *non*-change is the finding.
+
+Both separate the classes on their own:
+
+| Class | line | sentence | sum |
+| --- | --- | --- | --- |
+| red | 0.501 | 0.583 | 1.085 |
+| yellow | 0.356 | 0.427 | 0.783 |
+| green | 0.166 | 0.293 | 0.459 |
+
+Monotonic in both, red−green separation 0.336 and 0.290. That is not the
+signature of one feature counted twice; that is two correlated features that
+each work. Compare `lexicalDiversity` in problem #16, whose class means sat
+inside 0.011 of each other — *that* is what a redundant feature looks like, and
+the contrast is the reason for measuring rather than reasoning from the
+correlation alone.
+
+The three fixtures where they disagree by more than 0.35 say what each one
+actually measures:
+
+- `green-data-analysis` — line 0.69, sentence 0.18. Even paragraph blocks,
+  varied sentences inside them. Genuine prose that happens to be evenly
+  chunked.
+- `green-plain-observation` — line 0.00, sentence 0.57. Ragged line lengths,
+  similar sentence lengths.
+- `edge-short-red` — line 0.00, sentence 0.68.
+
+Line uniformity is a property of *layout*; sentence uniformity is a property of
+*rhythm*. A templated post is usually both, which is the 0.64 — but a post can
+be either alone, and collapsing them would lose exactly those cases.
+
+A sweep over both weights, jointly with `BIAS` across 0.85–1.15, confirms it:
+the current 0.30/0.30 at bias 1.05 scores 27/31 and **every reduction tested
+scored worse** — 0.22/0.22 → 26, 0.18/0.18 → 24, dropping either to zero → 25.
+
+Worth stating plainly, since two of the three items queued after problem #14
+turned out differently once measured: **high correlation between two features is
+a reason to check for redundancy, not evidence of it.** The check is whether
+each separates the classes, and here both do.
+
+### 18. Label granularity, settled before collection rather than after
+
+Labels recorded the same three verdicts the scorer emits, which was never a
+decision — it was the shape the code happened to have. Problem #6 above had
+flagged the alternative and left it open. It is now 1–5, collapsing to the three
+buckets through `toVerdict` in [labels.ts](extension/src/lib/labels.ts).
+
+The asymmetry is the whole argument, and it is not about which scale is better:
+
+- Finer, and it turns out unnecessary → collapse, lose nothing.
+- Coarse, and it turns out insufficient → **re-label every post.**
+
+So the cost of being wrong is an hour in one direction and the entire dataset in
+the other. That settles it without needing to predict which is right.
+
+Two things it buys phase 5 concretely. **A usable middle**: on a three-way scale
+"useful but generic" and "nearly red, being charitable" are the same label, so
+the boundary the model most needs to learn is exactly where the data is
+noisiest. **Movable thresholds**: buckets can be re-derived at different cut
+points, and a regressor can be fit against the rating directly, neither of which
+is possible once the coarse form is all that was recorded.
+
+The cost is real and lands on the labeler, not the code: telling a 2 from a 3
+consistently across months is harder than picking one of three buttons, and
+inconsistent fine labels are worse than consistent coarse ones. Two mitigations
+are in place. Each button carries a word and a hint (`2 — Good: worth reading,
+carries something concrete`) so the points stay anchored to the same meaning
+over time. And the popup plots the 1–5 spread beside the three-way split: **if
+the counts pile onto 1, 3 and 5, the middle points are not being distinguished
+in practice** and the granularity is costing effort without buying resolution —
+visible early, while collapsing back is still free.
+
+`rating` is the stored truth and `label` is denormalized beside it. The
+redundancy is deliberate: the JSONL has to be self-contained for a training
+script that should not reimplement the cut points, and `summarizeLabels`
+derives the class from `rating` rather than reading `label`, so moving a
+boundary re-counts historical rows instead of invalidating them.
+
+`SCORER_VERSION` is now `rules-2`, covering both this change and the weight
+changes in #14–#17. A `rules-1` row carries no `rating` and cannot be collapsed
+forward, so phase 5 must read the version before trusting a row's shape.

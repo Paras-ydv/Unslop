@@ -9,9 +9,10 @@
     "build:popup": "node scripts/build-popup.mjs",
     "dev": "npm run build:popup && vite build --watch --mode development",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude '**/*.report.test.ts' --exclude '**/node_modules/**'",
     "test:watch": "vitest",
-    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "rates": "vitest run src/lib/features/rates.report.test.ts --reporter=verbose --disableConsoleIntercept"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.0",
