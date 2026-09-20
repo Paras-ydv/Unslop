@@ -153,51 +153,132 @@ That is why informational density carries the heaviest weight of any feature
 group, and why the corpus includes posts that are heavily formatted *and*
 substantive — they must survive.
 
-## Collecting labels
+## Dogfooding
 
-Expand any row in the panel and rate the post **1–5** — 1 is a great read, 5 is
-slop. Each button names its point on hover (`2 — Good: worth reading, carries
-something concrete`), because the scale is only worth its extra cost if 2 means
-the same thing in month two as in week one.
+Collecting the dataset that phase 5 fits the weights from. Nothing else is
+blocking that phase, so this is the work.
 
-Ratings collapse to the three verdicts for scoring, but **1–5 is what gets
-stored**: collapsing is one-way, so recording only the coarse form would freeze
-both the class boundaries and the thresholds into the dataset. See problem #18
-in [plan.md](plan.md).
+### 1. Build and load the extension
 
-Labels are written to `chrome.storage.local` immediately and never transmitted.
+```bash
+cd extension
+npm install
+npm run build
+```
 
-### Getting the dataset into the repo
+Then at `chrome://extensions`: **Developer mode** on, **Load unpacked**, select
+`extension/dist`.
 
-A Chrome extension cannot write to arbitrary paths — downloads are the only
-channel — so point Chrome's download directory at the repo once:
+**After any rebuild, press ↻ on the extension card**, then hard-refresh LinkedIn
+with `Ctrl+Shift+R`. A page refresh alone keeps the old content script. If the
+*manifest* changed — new permissions, for instance — a reload can still fail to
+grant them; remove the extension and Load unpacked again.
+
+### 2. Point Chrome's downloads at the repo
+
+Do this once. A Chrome extension cannot write to arbitrary paths — downloads are
+the only channel it has — so the download directory is what decides where the
+dataset lands:
 
 1. `chrome://settings/downloads`
 2. **Location** → Change → `<repo>/labels`
 3. Leave **"Ask where to save each file"** off
 
-**Export** in the toolbar popup then writes `labels/unslop/labels.jsonl` in one
-click, overwriting the previous file. Full setup and the row format are in
-[labels/README.md](labels/README.md).
+This changes the download directory for all of Chrome. If that is unwanted,
+leave "Ask where to save" **on** and choose the folder on each export instead.
 
-Export often, not just when you are ready to train. `chrome.storage.local` is
-per-profile and per-machine: a cleared profile, a different browser or a new
-laptop loses everything that is not in the file. `labels/*.jsonl` is gitignored
-— the dataset is other people's posts and does not belong in a public repo.
+### 3. Rate posts
+
+Open `linkedin.com/feed/` and scroll. The panel fills as posts come into view.
+Expand any row and rate it **1–5**:
+
+| | | |
+| --- | --- | --- |
+| **1** | Great | Learned something I could not have written myself |
+| **2** | Good | Worth reading, carries something concrete |
+| **3** | Fine | Neither useful nor objectionable |
+| **4** | Weak | Mostly filler, thin on substance |
+| **5** | Slop | No value — bait, platitudes, or pure template |
+
+Each button carries its wording on hover, because a five-point scale is only
+worth its cost if 2 means the same thing in month two as in week one.
+
+A rating saves immediately and the row confirms `Saved: 4 · Weak ✓`. **If it
+says "NOT SAVED — storage failed" in red, stop** — see troubleshooting below.
+Ratings are written to `chrome.storage.local` and never transmitted.
+
+Ratings collapse to the three verdicts for scoring, but **1–5 is what gets
+stored**: collapsing is one-way, so recording only the coarse form would freeze
+the class boundaries and the thresholds into the dataset permanently. Problem
+#18 in [plan.md](plan.md) has the argument.
+
+### 4. Export into the repo
+
+Click the Unslop icon in the toolbar (behind the 🧩 puzzle icon unless pinned),
+check the counts, then **Export JSONL**. It writes `labels/unslop/labels.jsonl`
+in one click, overwriting the previous file.
+
+**Export every session, not just when you are ready to train.**
+`chrome.storage.local` is per-profile and per-machine: a cleared profile, a
+different browser or a new laptop loses everything that is not in the file. The
+file in `labels/` is the backup, not the browser.
+
+`labels/*.jsonl` is gitignored. The dataset is other people's posts and does not
+belong in a public repo.
+
+### 5. Read the first few rows before collecting in bulk
+
+Open the exported file and read it. This is worth a few minutes at ~10 rows and
+again at ~50, because the failures it catches are invisible from the panel:
+
+- Is `text` the **post body** — not an author byline, a video player's caption
+  dialog, or a reaction counter? All three were captured as posts in the first
+  seven real rows.
+- Does any post appear **twice**? The collapsed and expanded forms of one post
+  used to hash to different ids.
+- Does `text` still end in `… more`, or hold obvious UI strings?
+
+Each of those is a row that teaches the wrong thing, and a wrong row is
+undetectable later — a byline rated 1 is indistinguishable from a real judgment
+once it is in the file. Bad rows are worse than bad verdicts: a wrong verdict on
+screen is visible and transient.
 
 ### What to watch while collecting
 
 - **Class balance beats raw count.** 400 labels that are 90% red train badly.
   The popup shows the split; deliberately seek out the thin classes.
-- **The 1–5 spread, also in the popup.** If the counts pile onto 1, 3 and 5,
-  the middle points are not being used in practice and the granularity is
-  costing effort without buying resolution — worth knowing early, while
-  collapsing back is still free.
+- **The 1–5 spread, also in the popup.** If the counts pile onto 1, 3 and 5, the
+  middle points are not being used in practice and the granularity is costing
+  effort without buying resolution — worth knowing early, while collapsing back
+  is still free.
 - **Rate the post, not the scorer.** Agreeing with a verdict you think is wrong
-  teaches nothing; the disagreements are where the information is.
-- **A failed save says so.** The row shows "NOT SAVED — storage failed" in red
-  rather than a tick. Storage errors used to be swallowed, which meant a full
-  quota could drop an entire session while the panel kept confirming.
+  teaches nothing. The disagreements are where the information is.
+- **Spread it over days.** One session is one day of whatever the feed algorithm
+  happened to surface.
+
+### Troubleshooting
+
+**"NOT SAVED — storage failed, see console"** — the rating did not reach
+storage. Open devtools on the LinkedIn tab, switch the console's context
+dropdown from `top` to the Unslop extension, and read the line beginning
+`[unslop] label not saved:`; it names the cause. The usual one is Chrome still
+running a build from before `unlimitedStorage` was in the manifest, which caps
+storage at ~10MB — reload the extension, and if that does not take, remove it
+and Load unpacked again.
+
+The message itself is deliberate. Storage errors used to be swallowed, so a full
+quota could drop an entire session while the panel kept showing ticks.
+
+**Posts missing from the panel** — the extractor rejects anything that does not
+look like post content, so an over-eager filter looks exactly like broken
+discovery. `__unslop.report()` on the LinkedIn tab names the failing stage in a
+sentence, and `__unslop.diagnose().path` says which discovery tier answered:
+`cards`, `headings` and `structure` are all containment-based, `heuristics` is
+the degraded path that cannot tell a comment from a post.
+
+**Nothing in `labels/`** — rating does not write the file; only **Export** does.
+If Export produces nothing, check that Chrome's download directory is set as in
+step 2, and look in `chrome://downloads` for a blocked entry.
 
 ## Open issues
 
