@@ -14,8 +14,71 @@ import {
   readUrn,
 } from "./selectors";
 
-/** Posts shorter than this are almost certainly chrome, not content. */
-const MIN_TEXT_LENGTH = 12;
+/**
+ * Posts shorter than this are almost certainly chrome, not content.
+ *
+ * Briefly raised to 40 to keep "2 comments" out of the label store, and put
+ * back: LinkedIn is full of genuinely short posts — "We shipped it. Finally.",
+ * "Congratulations! Well deserved.", "We're hiring, DM me" — and a 40-character
+ * floor rejected all of them. It was a length rule standing in for a content
+ * rule, and it silently dropped a whole class of real posts to catch chrome
+ * that `NOT_A_POST` identifies directly.
+ *
+ * Short *and* not a post is the chrome case, and that is what the content
+ * checks below are for. Short alone is just a short post.
+ */
+export const MIN_TEXT_LENGTH = 12;
+
+/**
+ * Text that is not a post, however much of it there is.
+ *
+ * Every pattern here was found in the first seven rows of real collected
+ * labels — the extractor was capturing author bylines, the video player's
+ * accessibility markup, and reaction counters, and each had been rated as
+ * though it were a post. At 300 rows that is a poisoned dataset nobody can
+ * clean up afterwards, because the only way to tell is to re-read every row.
+ *
+ * Matching on visible English strings is the weakness problem #3 warns about,
+ * so this is a last-resort filter *after* the structural checks, never a
+ * substitute for them. The video-player block is the exception worth the risk:
+ * it is `<track>` UI text that no post would contain, and it is verbatim
+ * enough to match reliably.
+ */
+const NOT_A_POST = [
+  // Video player accessibility text, rendered as a caption-settings dialog.
+  /\bStream Type\b.*\bLIVE\b/is,
+  /\bThis is a modal window\b/i,
+  /\bText Edge Style\b/i,
+  /\bVideo Player is loading\b/i,
+  // Reaction and comment counters scraped as a body.
+  /^[^\n]{0,80}\band \d+ others?\b[^\n]{0,40}(reacted|liked)?\s*$/im,
+];
+
+/**
+ * Does this read as a profile byline rather than a post?
+ *
+ * LinkedIn headlines — "7M+ Impressions | Content creator | Ghostwriting" —
+ * clear any length floor worth having and carry no sentence structure. They
+ * were being scored as posts and rated as posts.
+ *
+ * The test is pipe-separation without sentence punctuation, which is what a
+ * headline is and what a post almost never is. A post that genuinely uses
+ * pipes will also contain a full stop somewhere, so it survives.
+ */
+function looksLikeByline(text: string): boolean {
+  if (text.includes("\n")) return false;
+  const segments = text.split("|");
+  if (segments.length < 3) return false;
+  // A real sentence ends somewhere. A headline does not.
+  if (/[.!?]\s/.test(text)) return false;
+  return segments.every((segment) => segment.trim().split(/\s+/).length <= 8);
+}
+
+/** Reject anything that is demonstrably not post content. */
+export function isPostContent(text: string): boolean {
+  if (looksLikeByline(text)) return false;
+  return !NOT_A_POST.some((pattern) => pattern.test(text));
+}
 
 /**
  * Longer than any single LinkedIn post, which caps out around 3000 characters.
@@ -24,7 +87,7 @@ const MIN_TEXT_LENGTH = 12;
  * has swallowed many posts, and scoring it would produce one meaningless
  * verdict for the whole page. Rejecting it is always right.
  */
-const MAX_TEXT_LENGTH = 6000;
+export const MAX_TEXT_LENGTH = 6000;
 
 /**
  * Derive a stable id for a post.
@@ -44,7 +107,31 @@ function derivePostId(urn: string | null, author: string | null, text: string): 
   stable: boolean;
 } {
   if (urn) return { id: urn, stable: true };
-  return { id: `hash:${hashString(`${author ?? ""}\0${text}`)}`, stable: false };
+  return {
+    id: `hash:${hashString(`${author ?? ""}\0${idPrefix(text)}`)}`,
+    stable: false,
+  };
+}
+
+/**
+ * The slice of body text a fallback id is derived from.
+ *
+ * Hashing the whole body made one post into two: the collapsed body and the
+ * expanded body are different strings, so a post rated before expanding and
+ * again after produced two ids, two panel rows, and two contradictory training
+ * rows. Real captured labels contained exactly that pair.
+ *
+ * A post's opening is what does not change when its tail is revealed, so the
+ * hash reads a prefix. 200 characters is longer than any collapsed preview —
+ * so the same post hashes the same whether or not it has expanded — and far
+ * shorter than a full post, so two different posts sharing an opening is the
+ * only new collision, which is the same collision the whole-body hash already
+ * had for genuine reposts.
+ */
+const ID_PREFIX_CHARS = 200;
+
+function idPrefix(text: string): string {
+  return text.slice(0, ID_PREFIX_CHARS);
 }
 
 /** FNV-1a. Not cryptographic — this only needs to be fast and well-distributed. */
@@ -121,6 +208,7 @@ export function extractPost(
 
   if (text.length < MIN_TEXT_LENGTH) return null;
   if (text.length > MAX_TEXT_LENGTH) return null;
+  if (!isPostContent(text)) return null;
 
   // For author detection, the body element is used as a landmark: only links
   // that appear before it in document order are candidates for the author.

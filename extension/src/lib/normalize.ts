@@ -42,8 +42,16 @@ export function normalizeText(raw: string): string {
     .trim();
 }
 
-/** The trailing affordance LinkedIn appends to collapsed posts. */
-const SEE_MORE = /(?:…|\.\.\.)\s*see more\s*$/i;
+/**
+ * The trailing affordance LinkedIn appends to collapsed posts.
+ *
+ * "see" is optional: the live feed renders "… more" as often as "…see more",
+ * and requiring the word left the marker sitting in captured post text — and,
+ * worse, made `truncated` read false for those posts, so the extractor never
+ * knew the body was cut. Both forms also appear with a plain "..." rather than
+ * the ellipsis character.
+ */
+const SEE_MORE = /(?:…|\.\.\.)\s*(?:see\s+)?more\s*$/i;
 
 /** Strip a trailing "…see more" affordance. Returns whether one was present. */
 export function stripSeeMore(text: string): { text: string; truncated: boolean } {
