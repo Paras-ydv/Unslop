@@ -20,7 +20,7 @@ data-collection target that only dogfooding can reach.
 | 3 — Rule engine & panel | Done | 27/31 exact (87%), zero inversions |
 | 4 — Labeled dataset | Mechanism done | Correction UI + JSONL export; **0 labels collected so far** |
 | 5 — Fit the weights | Not started | Blocked on phase 4 data; revised from an ONNX model to fitting `weights.ts` |
-| 6 — Backend | Not started | Optional |
+| 6 — Pooled weights | Not started | Backend + opt-in vector upload, fetched weights. No longer optional — it is what makes the weights general |
 
 ---
 
@@ -238,11 +238,194 @@ side wins.
 
 ---
 
-## Phase 6 — Backend  *(components 6–9, optional)*
+## Phase 6 — Pooled weights  *(components 6–9)*
 
-Build only when a real need appears: LLM-written explanations on demand,
-embedding similarity for detecting recycled or templated posts, or cross-user
-aggregation. FastAPI + Postgres + Redis, as diagrammed.
+**No longer optional, and no longer "a backend if a need appears".** Phase 5
+fits `weights.ts` from one person's labels, which fits one person's taste on one
+professional network — problem #5, unaddressed. Pooling contributions from every
+install is the only thing that actually fixes it, and it is the stated goal:
+weights that generalise rather than weights tuned to whoever built it.
+
+This is a real project, not a config change, and it is sequenced **after** phase
+5 deliberately. If a linear fit on 300 local labels does not beat the hand-tuned
+weights, pooling infrastructure would be solving a problem not yet shown to
+exist. Phase 5 is what earns phase 6.
+
+### The promise this breaks
+
+The README says **"No post ever leaves the browser"** and the shipped manifest
+says **"on-device"**. Pooling contradicts both. That wording has to change before
+a single byte is uploaded, and changing it quietly would be the worst version of
+this. It is the first task in the phase, not the last.
+
+### What is uploaded: feature vectors, never post text
+
+The decision everything else follows from:
+
+```json
+{
+  "features": [0.42, 0.0, 0.81, "..."],
+  "rating": 4,
+  "featureVersion": "v27",
+  "scorerVersion": "rules-2"
+}
+```
+
+27 numbers and a rating. The post is not reconstructable from ratios, so what
+leaves the device is a *judgment about measurements* rather than content someone
+else wrote about their colleagues. This is not anonymity — a feature vector is
+still derived from a real person's post — but it is a different category of
+exposure from shipping the text, and it is exactly what training consumes
+anyway.
+
+The cost is real and worth stating: **vectors cannot be recomputed.** Changing a
+detector invalidates every pooled vector, because the numbers no longer mean what
+they meant. Local labels keep their `text` and can always be refit; pooled
+contributions cannot. Hence `featureVersion`, and hence the rule that vectors
+only pool within one version.
+
+Upload is **opt-in and off by default**, with a visible way to stop contributing
+and to delete what was already sent.
+
+### Weights become fetched, not compiled
+
+Otherwise pooling only helps whoever gets the next release, which defeats the
+point.
+
+```
+extension                     backend                    maintainer
+─────────                     ───────                    ──────────
+rate a post
+  ↓
+store locally (text + rating)
+  ↓ opt-in, batched
+POST /contributions ────────→ pool
+                                ↓
+                        fit on a schedule
+                                ↓
+GET /weights ←──────────────── weights.json (versioned)
+  ↓
+cache; apply on next load
+```
+
+`weights.ts` stops being the source of truth and becomes the **fallback** — what
+the extension scores with when the fetch fails, the network is gone, or the
+response does not validate. Offline must keep working, and a bad response must
+never be able to leave the extension unable to score anything.
+
+Weights still never change mid-session. A fetched set applies on next load, for
+the same reason phase 5 freezes them at build time: a post must not score
+differently depending on when it was seen.
+
+### Ship a scoring spec, not an array
+
+The single most important thing to get right early, and it costs nothing now:
+
+```json
+{ "version": 7, "kind": "linear", "coefficients": {}, "bias": 1.05,
+  "thresholds": { "green": 0.28, "red": 0.60 } }
+```
+
+`kind` is the hinge. Adding `"kind": "gbm"` later is a client update against an
+existing contract rather than a redesign. A bare array would force a breaking
+change the day the model stops being linear.
+
+### Which model, at which scale
+
+The answer changes with the size of the pool, and "scale up" does **not** mean
+"eventually neural networks":
+
+| Contributions | Model | Why |
+| --- | --- | --- |
+| 500 – 5k | Logistic regression | Anything richer overfits 27 features |
+| 5k – 50k | Logistic + interaction terms, or gradient boosting | Interactions start paying |
+| 50k+ | Gradient boosting | On engineered tabular features, GBMs beat neural nets at essentially every size |
+
+Neural networks earn their keep when a model must learn features from raw input
+— text, images. These features are hand-built and numeric, which is the regime
+where boosted trees win. A network here would cost the shipping story, the
+explanations and the latency budget to buy accuracy it is unlikely to deliver.
+
+**Benchmark GBM alongside the linear fit from the first refit**, log both
+cross-validated scores, and ship the linear one. The day GBM's margin exceeds
+what a model file costs in payload, latency and explanation fidelity is the
+switch point — arrived at by a number that has been watched for months, not by a
+guess. It is entirely possible the explanations stay worth more than the margin.
+
+### Retention, not delete-on-train
+
+Contributions are **kept**. Training reads rows; it does not consume them.
+Deleting after a fit breaks four things at once, and the fourth is new in a
+pooled world:
+
+- **Every refit shrinks.** `LogisticRegression.fit` solves from scratch on the
+  rows it is given — it does not update previous coefficients. Fit on 500,
+  delete, collect 300, and the next fit sees 300, not 800. The model gets worse
+  over time, which is the opposite of the point of pooling.
+- **No cross-validation.** 5-fold needs the whole set, repeatedly.
+- **No comparison or rollback.** "Is this release better than the last?" needs
+  both fits run against the same held-out rows.
+- **No retroactive poison removal.** Someone floods the pool, it is noticed a
+  month later, and without the rows there is no way to find or remove their
+  contributions.
+
+The storage this avoids is not a real cost: ~250 bytes per contribution means a
+million rows is ~250 MB, inside the free tier of any managed Postgres. The
+server costs the same whether the table holds a thousand rows or a million.
+
+Bound the pool by **age and feature version** instead:
+
+- Drop contributions older than 12 months — keeps the pool current as well as
+  bounded, and old feeds are stale anyway.
+- Drop vectors from a retired `featureVersion` — they are unusable regardless,
+  being a different length.
+- Cap contributions per install, so no single prolific labeler dominates.
+
+### What this costs, stated plainly
+
+- **A server, operated and paid for indefinitely.** If it goes down, weights
+  stop updating; the fallback is what keeps the extension working.
+- **An abuse surface.** Anyone can POST. Ten thousand fabricated `rating: 1`
+  vectors on bait-shaped features poison the pool. Needs per-install keys, rate
+  limiting, outlier detection, and the retained history above to undo damage
+  found late.
+- **A release pipeline with teeth.** A bad fit reaches everyone at once, so
+  phase 5's verification gate runs automatically — corpus at zero inversions,
+  cross-validated comparison, sign check — plus the ability to roll back to a
+  previous `version`.
+- **A cold start.** Until several people contribute, the pool *is* one person's
+  labels, and nothing improves until adoption arrives.
+
+### The question pooling does not answer
+
+Pooled weights average **taste**, and taste genuinely differs: a recruiter and an
+engineer will rate the same post differently and neither is wrong. A single
+pooled set converges on a median that may serve nobody especially well.
+
+Worth designing for rather than discovering: pooled weights as the default, with
+a person's own labels able to adjust on top. That is strictly more work than one
+global fit, and it is the honest answer to "whose taste is this".
+
+**Milestone:** contributions from more than one person, a pooled fit that beats
+the single-person fit on held-out data from a *different* contributor, and a
+rollback that has been exercised at least once.
+
+### Deferred, and still only "if a need appears"
+
+The original phase 6 bundled three unrelated things behind one backend. Pooled
+weights is the one with a reason to exist. The other two stay optional and are
+not part of the milestone above:
+
+- **Embedding similarity for recycled or templated posts.** The mass
+  producibility gap named in problem #2b — a single post cannot reveal that it
+  is one of a thousand near-identical outputs, so only comparison across many
+  posts can detect it. That is cross-post state, not per-post scoring.
+- **LLM-written explanations.** Rewriting "Contains concrete numbers" as prose.
+  Worth noting the cheaper version first: better wording for the 27 feature
+  labels costs nothing, stays offline, and addresses most of what is
+  unsatisfying about the current panel. An LLM here needs a key, which needs a
+  server to hold it, which means post text leaving the device — a larger
+  privacy step than uploading vectors, for a cosmetic gain.
 
 ---
 
@@ -318,6 +501,11 @@ that mostly does not arrive.
 One person's feed is not a representative corpus. Phase 4 labels will overfit to
 a single professional network. Worth sourcing posts outside the personal feed
 before trusting Phase 5 accuracy numbers.
+
+**This is what phase 6 exists for.** Pooling contributions across installs is
+the only real fix — sourcing posts by hand widens one person's sample, it does
+not make the sample representative. Until then, any accuracy number from phase 5
+describes one person's taste on one network and should be quoted that way.
 
 ### 6. No ground truth for "low value"
 
